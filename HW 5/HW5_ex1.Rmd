@@ -1,0 +1,205 @@
+---
+title: '12.2'
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+
+As a first step, the necessary packages will be loaded.
+```{r, message=FALSE, warning=FALSE}
+library(naniar) # for missing values analysis
+library(data.table) # package to handle the data in the data table format
+library(ggplot2) # package to produce graphs
+library(klaR) # package to produce the graph for separating the data with a line 
+library(mda) # package for discriminant analysis
+library(caret) # package with several function, here used for the confusionMatrix() function
+```
+
+The data will be loaded in the following.
+```{r, message=FALSE, warning=FALSE}
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining/Homework 5/data") # set the working directory
+syas <- fread("SystemAdministrators.csv") # read the data as a data table
+```
+```{r, message=FALSE, warning=FALSE}
+dim(syas) # show the dimensions of the data set
+```
+The data set has 75 observations and 3 features.
+
+```{r, message=FALSE, warning=FALSE}
+syas$`Completed task` <- as.factor(syas$`Completed task`) # make completed task a factor
+summary(syas) # show the summary of the data set
+```
+The experience ranges from 2.70 to 13.70 with the central 50% of the data between 5.20 and 7.85. Training ranges from 4.0 until 8.0 but the central 50% equal to 4.00. 1/4 of the administrators who did not completed the task completed the task.
+
+```{r, message=FALSE, warning=FALSE}
+# Plot the distributions of the data set with ggplot
+ggplot(syas, aes(x = Experience)) + # create a new ggplot with syas as data and Experience on the x-axis
+  geom_histogram(binwidth = 1) + # set binwidth to 1
+  labs(title = "Distribution of Experience",
+       x = "Experience") # set the labels
+```
+\
+The distribution of Experience is approximately normal distributed but right skewed.
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(syas, aes(x = Training)) + # create a new ggplot with syas as data and Training on the x-axis
+  geom_histogram(binwidth = 1) + # set binwidth to 1
+  labs(title = "Distribution of Training",
+       x = "Training") # set the labels
+```
+\
+The absolute majority is 4, few observations are at 6 and 8.
+```{r, message=FALSE, warning=FALSE}
+ggplot(syas, aes(x = syas$`Completed task`)) + # create a new ggplot with syas as data and "Completed task" on the x-axis
+  geom_bar() + # it shall be a bar plot with default characteristics
+  labs(title = "Distribution of Completed task",
+       x = "") # set the labels
+```
+\
+As described above, the 4/5 of the administrators did not complete the task.
+
+The following graph will concern missing values in the data set.
+```{r, message=FALSE, warning=FALSE}
+gg_miss_var(syas) # show missing values if there are any
+```
+\
+There are no missing values in this data set.
+
+## a)
+
+### Create a scatter plot of Experience vs. Training using color or symbol to differentiate administration who completed the tasks from those who did not complete them. See if you can identify a line that separates the two classes with minimum misclassification.
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(syas, aes(x = Experience, y = Training, color = syas$`Completed task`)) + # create a new ggplot with syas as data, setting Experience on the x-axis and Training on the y-axis
+  geom_point() + # set the form to a point plot
+  scale_color_manual(values = c("red", "green")) + # set the color referring to Completed task
+  labs(title = "Completed task") + # set the title
+  theme(legend.title=element_blank()) # remove the legend title
+```
+More green points (administrators who completed the task) have a higher level Experience than those who did not solve the task.
+
+```{r, message=FALSE, warning=FALSE}
+syas$`Completed task` <- as.factor(syas$`Completed task`) # make Completed task a factor
+partimat(syas$`Completed task`~ Training + Experience, data = syas, method = "lda") # plot the data, separated by a line that minimizes the error with the help of the partimat function from the klaR package
+```
+\
+The same conclusion as above can be drawn here.
+
+## b)
+
+### Run a discriminant analysis with both predictors using the entire dataset as training data. Among those who completed the tasks, what is the percentage of administrators who are classified incorrectly as failing to complete the tasks?
+
+```{r, message=FALSE, warning=FALSE}
+discriminantModel <- lda(syas$`Completed task`~ Experience + Training, data = syas) # build the discriminant analysis model with the whole dataset
+syas$Prediction <- predict(discriminantModel, syas)$class # make prediction, using the recently created model
+confusionMatrix(syas$Prediction, syas$`Completed task`, positive = "Yes") # show the confusion matrix
+```
+5 were classified as failing to complete the task. This is 1/3 of all who completed the task and 7.9% of those classified of not completing the task and 6.67% of all observations.
+
+## c)
+
+### Compute the two classification scores for an administrator with 4 months of experience and 6 credits of training. Based on these, how would you classify this administrator?
+
+```{r, message=FALSE, warning=FALSE}
+newAdministrator <- data.table("Experience" = 4,
+                               "Training" = 6) # create a new administrator with the values from the task
+predict(discriminantModel, newAdministrator) # predict this new administrator
+```
+The model predict with 99.9% probability that this administrator would not complete the task.
+
+## d)
+
+### How much experience must be accumulated by an administrator with 4 training credits before his or her estimated prbability of completing the tasks exceeds 0.5?
+
+This task will be done by evaluating the percentage of completing the task for different levels of experience by using a while loop.
+```{r, message=FALSE, warning=FALSE}
+stp <- TRUE # set a stop variable
+oldExperience = 0 # set the initial experience value to 0
+
+# find the lowest possible value for experience that lead to the prediction "Yes" by the help of a while loop
+while(stp){ # while there has not yet been a value for Experience found that led to the prediction "Yes"
+  oldExperience <- oldExperience + 0.1 # increase the level of experience by 0.1 (months)
+  # create a new entity with the respective values (the increased Experience and Training = 4)
+  newAdministrator <- data.table("Experience" = oldExperience,
+                                 "Training" = 4)
+  if (predict(discriminantModel, newAdministrator)$posterior[,2] > 0.5){ # if the prediction for this combination is "Yes",
+    stp = FALSE # set the stap variable to false to end the loop
+    print(paste("Required Experience Level:", oldExperience)) # print the minimum required value for experience
+  }
+}
+```
+The required experience level is about 9.1 years.
+
+## e)
+
+### Compare the classification accuracy of this model to that resulting from a logistic regression with cutoff 0.5.
+
+At first, the model will be created and the predictions will be done.
+```{r, message=FALSE, warning=FALSE}
+# Sampling
+set.seed(1) # reproducibility
+trainingIndex <- sample(c(TRUE, FALSE), nrow(syas), replace=TRUE, prob=c(0.6,0.4)) # divide the indiced randomly into training (60 %) and test (40 %)
+training <- syas[trainingIndex,] # assign the respective values of trainingIndex to a training data set
+test <- syas[!trainingIndex,] # assign the values that have not been assigned the the training set to a test set
+
+# create a logistic regression model with the training set to predict if the task was completed by using Training and Experience as independent variables
+logistic_model <- glm(training$`Completed task` ~ Training + Experience, 
+                      data = training, 
+                      family = "binomial")
+
+# predict the outcomes for the test set, using the predict function and round the outcome, the cutoff value is therefore 0.5
+test$LogisticPrediction <- round(predict(logistic_model,
+                                   test,
+                                   type = "response")
+)
+```
+
+Now, the models will be evaluated.
+```{r, message=FALSE, warning=FALSE}
+# make the names uniformly with the true outcomes and previous predictions
+test$LogisticPrediction[test$LogisticPrediction==1] <- "Yes"
+test$LogisticPrediction[test$LogisticPrediction==0] <- "No"
+
+# transform the predictions to factors
+test$LogisticPrediction <- as.factor(test$LogisticPrediction)
+
+# show the confusion matrices for both methods, the logistic regression and the discriminant analysis
+confusionMatrix(test$LogisticPrediction, test$`Completed task`, positive = "Yes")
+confusionMatrix(test$Prediction, test$`Completed task`, positive = "Yes")
+```
+Both models have approximately equal performance values. They reach an overall accuracy of 90% and 86.67% and a sensitivity of 57.14%.
+
+## References
+
+### Packages
+
+  Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data Structures,
+  Summaries, and Visualisations for Missing Data_. R package version
+  0.6.1, <https://CRAN.R-project.org/package=naniar>.
+  
+  Dowle M, Srinivasan A (2021). _data.table: Extension of
+  `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  H. Wickham. ggplot2: Elegant Graphics for Data Analysis.
+  Springer-Verlag New York, 2016.
+  
+  Weihs, C., Ligges, U., Luebke, K. and Raabe, N. (2005). klaR
+  Analyzing German Business Cycles. In Baier, D., Decker, R. and
+  Schmidt-Thieme, L. (eds.). Data Analysis and Decision Support,
+  335-343, Springer-Verlag, Berlin.
+  
+  Leisch SobTH&RTORpbF, Hornik K, code. BDRBNhcttuot (2022). _mda:
+  Mixture and Flexible Discriminant Analysis_. R package version
+  0.5-3, <https://CRAN.R-project.org/package=mda>.
+  
+  Kuhn M (2022). _caret: Classification and Regression Training_. R
+  package version 6.0-93, <https://CRAN.R-project.org/package=caret>.

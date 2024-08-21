@@ -1,0 +1,405 @@
+---
+title: "Task 9.3"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data preparation
+
+Before the actual analysis can be carried out, data have to be prepared. Since it is the same dataset at in task 6.4. and the exploratory part has been done there, no further data exploration will be done, here.
+\
+The first step is to load the necessary packages for this task.
+```{r, message=FALSE, warning=FALSE}
+library(data.table) # package for handling data in a datatable
+library(caret) # package includes function RMSE
+library(Hmisc) # package includes function cut2
+library(rpart) # package for regressions/classification trees
+library(rpart.plot) # package to plot regression/classification trees
+library(tidyverse) # package order data
+library(gtools) # package for combinations
+```
+
+```{r, message=FALSE, warning=FALSE}
+# read the dataset
+
+corolla <- fread("ToyotaCorolla.csv") # read the data as a datatable
+```
+
+To carry out the machine learning in the next tasks, the dataset must be split into training and validation sets. (60:40)
+```{r, message=FALSE, warning=FALSE}
+# Splitting
+
+trainingIndex = sample(seq_len(nrow(corolla)), size = 0.6*nrow(corolla)) # assigning 60% of the indices of the initial dataset to trainingIndex 
+training = corolla[trainingIndex,] # training gets the to trainingIndex corresponding values
+validation = corolla[-trainingIndex,] # validation gets the 40% of the data that have not been assigned to training
+```
+
+## a) {.tabset}
+
+### Initial regression tree
+
+In this section, the initial regression tree with a lot of features will be built before the subtasks i), ii), iii) will be approached.
+
+As a first step, the desired variables are being selected.
+```{r, message=FALSE, warning=FALSE}
+# Variable selection
+variables <- c("Price", "Age_08_04", "KM", "Fuel_Type", "HP", "Automatic", "Doors", "Quarterly_Tax", "Mfr_Guarantee", "Guarantee_Period", "Airco", "Automatic_airco", "CD_Player", "Powered_Windows", "Sport_Model", "Tow_Bar") # these variables shall be used for the regression tree
+training = training[, ..variables] # reduce the training set to these variables
+```
+
+Then the tree will be built in this section, setting the maximum levels of the tree to 30, the minimum number of observations in the terminal node to 1 and the complexity value 0.001.
+```{r, message=FALSE, warning=FALSE}
+# Regression Tree
+set.seed(1) # reproducability
+regrTreeTra <- rpart(Price ~ ., data = training, control = rpart.control(maxdepth = 30, minbucket = 1, cp = 0.001)) # regress price on every variable of training, set control variables: Max. number of levels of a tree cannot be bigger than 30 due to the function/system of the computer, minbucket describes the minimum number of observations in the last node and cp is the complexity, given by the task
+prp(regrTreeTra, type = 1) # plot the tree
+```
+\
+One can see that this tree is very detailed and deeply structured. It has 32 terminal nodes.
+
+Concrete numbers about the tree are derived as follows.
+```{r, message=FALSE, warning=FALSE}
+printcp(regrTreeTra)
+```
+The 10 variables which are displayed above were selected to calculate this tree. There are 31 nodes.
+
+### i)
+
+#### Which appear to be the three or four most important car specification for predicting the car's price?
+
+The first approach will directly use the information that are stored in the regression tree variable.
+```{r, message=FALSE, warning=FALSE}
+importance <- data.frame(regrTreeTra$variable.importance) # take the variable importance directly from regression tree
+importance <- rownames_to_column(importance, var = "Variables") # take names of the variable so that they can accessed later or are at least visible
+importance <- data.table("Variables" = importance$Variables, "Importance" = importance$regrTreeTra.variable.importance)
+importance
+```
+The table shown displays all the variables of the model and their respective importance. As the task asks for the 3-4 most important variables, these will be selected and presented as follows.
+
+```{r, message=FALSE, warning=FALSE}
+importance <- importance[1:4,] # take the 4 most important ones
+
+ggplot(importance, aes(x = reorder(Variables, desc(Importance)), y = Importance)) + # use ggplot to plot the first 4 most important variables and reorder them
+  geom_bar(stat = "identity") + # shall be a bar plot with stat = identity
+  labs(title = "The 4 most important variables", x = element_blank()) # set title and blank x-axis
+```
+
+Another approach that does not directly address the importance of the used variables in the previous model but asks for the 4 best features to predict a car's price with a 4 feature model is presented in the following. From this viewpoint, this combination can also be referred to as the 4 most important variables to predict a car's price.\
+\
+First, all possible combinations of 4 features are taken and for each of them a new model is created. Then the RMSE is calculated for each model and compared to the best RMSE that has already been achieved by previous models. The "best" combination of 4 features and its RMSE for the training set will be kept.
+
+```{r, message=FALSE, warning=FALSE}
+combinations <- combinations(15, 4, repeats.allowed=FALSE) # produce all combinations without repetitions for 18 numbers on 4 spots
+training2to16 <- as.data.frame(training[,2:16]) # exclude price
+min = 100000 # set the minimum value to a large number
+minSet = "" # set the variable to store the best set
+la <- length(combinations)/4 # take the length of computations and divide it by 4 because the rows of each column count into length
+for (i in 1:la){ # go through all combinations
+  set.seed(1)
+  set <- c(combinations[i,1], combinations[i,2], combinations[i,3], combinations[i,4]) # set set to the current combination of features
+  subset <- training2to16[, set] # make a subset of these features
+  subset <- data.frame(subset, "Price" = training$Price) # add price to this subset
+  combRegrTree <- rpart(Price ~ ., data = subset, control = rpart.control(maxdepth = 30, minbucket = 1, cp = 0.001)) # run a regression tree for this subset
+  combRegrPred <- predict(combRegrTree, training) # predict based on the created regression tree
+  rmse <- RMSE(combRegrPred, training$Price) # calculate the standard error
+  if (rmse < min){ # if a new "best" combination was found
+    min = rmse # set min to the new minimal RMSE
+    minSet = set # save the new "best" set
+  }
+}
+
+# printing the results
+print(paste("Minimal RMSE:", round(min,4)))
+print(paste("Best set:", colnames(training2to16[,minSet][1]), colnames(training2to16[,minSet][2]), colnames(training2to16[,minSet][3]), colnames(training2to16[,minSet][4])))
+```
+
+This solution gives Age_08_04, KM, Fuel_Type_Diesel and HP as the best possible set of four features, regarding RMSE.
+\
+\
+Both solution vary. This can be due to the fact that the first result measured the importance of the features in a tree with many features, while the second approach finds the best set of variables which must have 4 features, which has not much to say about the variable importance of another model.\
+Nevertheless, one can see that age is the most important one for both approaches. Mileage and Quarterly Tax also appear in either of them.
+
+### ii)
+
+#### Compare the prediction error of the training and validation sets by examining their RMS error and by plotting two boxplots. How does the performance of the validation set compare to the training set? Why does this occur?
+\
+The first step is to predict the prices for both, the training and the validation set, using the regression tree which was derived before.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1)
+predTraining <- predict(regrTreeTra, training) # store the result of predicting the training set prices in predTraining
+set.seed(1)
+predValidation <- predict(regrTreeTra, validation) # store the result of predicting the validation set prices in predValidation
+```
+
+The predicted prices are to be organised in a common datatable.
+```{r, message=FALSE, warning=FALSE}
+diffTraining <- data.table("pricesTraining" = training$Price, "prediction" = predTraining, "diff" = training$Price - predTraining) # new datatable with the true prices, the predictions and their difference for training
+diffValidation <- data.table("pricesValidation" = validation$Price, "prediction" = predValidation, "diff" = validation$Price - predValidation) # new datatable with the true prices, the predictions and their difference for validation
+```
+\
+This leads to the following RMSEs.
+```{r, message=FALSE, warning=FALSE}
+RMSE(diffTraining$prediction, diffTraining$pricesTraining) # RMSE for training
+RMSE(diffValidation$prediction, diffValidation$pricesValidation) # RMSE for training
+```
+The predictive performance for the training set is better than for the validation set, at least referring to RMSE.
+\
+This can also be seen in the boxplots below.
+```{r, message=FALSE, warning=FALSE}
+trainingPlot <- ggplot(diffTraining, aes(y=diff)) + # new ggplot with diffTraining as data, use as y-axis the difference diff
+  geom_boxplot() + # create a boxplot
+   labs(title = "Prediction errors for Training") + # set the title
+   theme(axis.title.x = element_blank(), # empty x-axis
+         axis.text.x = element_blank(),
+         axis.ticks.x = element_blank()) +
+   coord_cartesian(ylim = c(-6000, 6000)) # set y-axis limits
+
+validationPlot <- ggplot(diffValidation, aes(y=diff)) + # new ggplot with diffValidation as data, use as y-axis the difference diff
+   geom_boxplot() + # create a boxplot
+   labs(title = "Prediction errors for Validation") + # set the title
+   theme(axis.title.x = element_blank(), # empty x-axis
+         axis.text.x = element_blank(),
+         axis.ticks.x = element_blank()) + 
+   coord_cartesian(ylim = c(-6000, 6000)) # set y-axis limits
+
+require(gridExtra) # needed for combining two ggplots
+grid.arrange(trainingPlot, validationPlot, ncol=2) # combine both ggplots that were created above
+```
+\
+There are more and stronger outliers in the validation set than in the training set.\
+This can be due to over fitting what comes as a result of a too complex, too detailed and too deep tree.
+
+### iii)
+
+#### How might we achieve better validation predictive performance at the expense of training performance?
+
+One might create a less complex and smaller tree that will perform worse on the training data but the loss of performance is no real performance but just over fitting (at least when cutting the tree/creating a smaller tree appropriately). This loss on the training data prediction might lead to a better performance on new data like the validation data, which shows the "real" quality of the model.
+
+### iv)
+
+#### Create a less deep tree by leaving the arguments cp, minbucket, and maxdepth at their default values. Compare to the deeper tree, what is the predictive performance on the validation set?
+
+First, the new tree will be created.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+regrTreeSmall <- rpart(Price ~ ., data = training) # run a regression tree with default values for cp, minbucket and maxdepth
+prp(regrTreeSmall, type = 1, split.font = 1, varlen = -10) # plot the regression tree
+length(regrTreeSmall$frame$var[regrTreeSmall$frame$var == "<leaf>"]) # number of final nodes
+```
+\
+The tree is much smaller and less complicated than the previous one. It has only 4 levels, 7 regular nodes and 8 terminal nodes.
+\
+How it performs is to find out in the next part.
+
+```{r, message=FALSE, warning=FALSE}
+# create a datatable to gather the data
+set.seed(1) # reproducability
+predVSmall <- predict(regrTreeSmall, validation) # predict the data from the validation set with the smaller tree
+performanceSmall <- data.table("TruePrices" = validation$Price, "PredictionSmall" = predVSmall, "PredictionDeep" = predValidation, "DiffSmall" = validation$Price - predVSmall, "DiffDeep" = validation$Price - predValidation) # create a new datatable with the true prices, the predictions and the error terms
+
+# calculate RMSEs for both trees for the validation set
+RMSE(performanceSmall$PredictionDeep, performanceSmall$TruePrices)
+RMSE(performanceSmall$PredictionSmall, performanceSmall$TruePrices)
+```
+\
+The RMSE has been increased by roughly 160 for the smaller tree. So, obviously the deep tree was either not over fitting or it has been cut down so so much that not only over fitting has been cancelled out but also parts of its actual explanatory power.
+\
+```{r, message=FALSE, warning=FALSE}
+deepPlot <- ggplot(performanceSmall, aes(y = DiffDeep)) +
+  geom_boxplot() + # new ggplot with performanceSmall as data and DiffDeep on the y-axis
+  coord_cartesian(ylim = c(-5000, 5000)) + # set the limits for the y-axis
+  theme(axis.title.x = element_blank(), # empty x-axis
+         axis.text.x = element_blank(),
+         axis.ticks.x = element_blank()) +
+  labs(title = "Errors deep tree") # set the title
+
+# same approach as above but for the smaller tree
+smallPlot <- ggplot(performanceSmall, aes(y = DiffSmall)) +
+  geom_boxplot() +
+  coord_cartesian(ylim = c(-5000, 5000)) +
+  theme(axis.title.x = element_blank(),
+         axis.text.x = element_blank(),
+         axis.ticks.x = element_blank()) +
+  labs(title = "Errors small tree")
+
+require(gridExtra) # needed for combining two ggplots
+grid.arrange(deepPlot, smallPlot, ncol=2) # combine both ggplots that were created above
+```
+\
+One can observe a few more outliers in the boxplot of the small tree but the median 50% look only slightly bigger. Also, the median is pretty close to 0 for both trees.
+\
+The predictive performance on the validation set has not been improved through using a smaller tree, but it has slightly diminished.
+
+## b) {.tabset}
+
+### Preparation
+
+#### Let us see the effect of turning tne price variable into a categorical variable. First, create a new variable that categorizes price into 20 bins. Now repartition the data keeping Binned_Price instead of Price. Run a regression tree with the same set of input variables as in the RT, and with Binned_Price as the output variable. As in the less deep regression tree, leave the arguments cp, minbucket, and maxdepth at their defaults.
+\
+A new column with the binned price is added to the initial dataset. The prices are divided into 20 quantile groups.
+```{r, message=FALSE, warning=FALSE}
+corolla$BinnedPrice <- cut2(corolla$Price, g = 20) # partition Price into 20 groups
+```
+
+The data must now be re-sampled.
+```{r, message=FALSE, warning=FALSE}
+# repartitioning
+set.seed(1) # reproducability
+trainingIndex = sample(seq_len(nrow(corolla)), size = 0.6*nrow(corolla)) # 60% of the indices of corolla shall be assigned to trainingIndex
+training = corolla[trainingIndex,] # assign the to trainingIndex corresponding values to training
+validation = corolla[-trainingIndex,] # the values that have not been assigned to training are added to validation
+```
+
+Again, the desired variables have to be selected.
+```{r, message=FALSE, warning=FALSE}
+# variable selection
+
+variables <- c("BinnedPrice", "Age_08_04", "KM", "Fuel_Type", "HP", "Automatic", "Doors", "Quarterly_Tax", "Mfr_Guarantee", "Guarantee_Period", "Airco", "Automatic_airco", "CD_Player", "Powered_Windows", "Sport_Model", "Tow_Bar") # set the variables that shall be used according to the task
+training = training[, ..variables] # reduce the training set to the previously assigned variables
+```
+
+### Classification tree
+
+Here, the new classification tree will be created, leaving the values for rpart.control on default.
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+classTreeb <- rpart(BinnedPrice ~ ., data = training) # create a classification tree like the regression tree above
+```
+
+### i)
+
+#### Compare the tree generated by the CT with the one generated by the RT. Are they different? (Look at the structure, the top predictors, size of tree, etc.) Why?
+
+At first, both trees will be plotted, using prp.\
+
+```{r, message=FALSE, warning=FALSE}
+prp(regrTreeSmall, type = 1, split.font = 1, varlen = -10) # plot the regression tree
+```
+
+```{r, message=FALSE, warning=FALSE}
+prp(classTreeb, type = 1, split.font = 1, varlen = -10) # plot the classification tree
+```
+
+The trees have a comparable size but the classification tree is slightly bigger. The regression tree has 8 final nodes, the classification tree has 10. The depth is 4 (regression tree) and 5 (classification tree).
+
+\
+In the following, the characteristics of the trees will be examined and compared in detail, using the printcp() function.
+
+```{r, message=FALSE, warning=FALSE}
+printcp(regrTreeSmall) # show details of the regression tree
+```
+
+```{r, message=FALSE, warning=FALSE}
+printcp(classTreeb) # show details of the classification tree
+```
+
+While the regression tree only uses Age and HP to do the splits, the classification tree uses Age, HP, KM, Powered_Windows and Quarterly_tax, what makes it more complicated. The classification also has more nodes (9) than the regression tree (7). The number of end nodes varies as mentioned above.
+\
+The are different because the regression tree works with a continuous dependent variable while the classification tree works with a categorical dependent variable.
+
+### ii)
+
+#### Predict the price, using the RT and the CT, of a used Toyota Corolla with the specifications listed in Table 9.6.
+
+At first, the new entity with the given characteristics has to be created. Then the prediction will be made.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1)
+newEntity <- data.table("Age_08_04" = 77, "KM" = 117000, "Fuel_Type" = "Petrol", "HP" = 110, "Automatic" = 0, "Doors" = 5, "Quarterly_Tax" = 100, "Mfr_Guarantee" = 0, "Guarantee_Period" = 3, "Airco" = 1, "Automatic_airco" = 0, "CD_Player" = 0, "Powered_Windows" = 0, "Sport_Model" = 0, "Tow_Bar" = 1) # set the new entity's values
+#predict(regrTreeTra, newEntity)
+predictionRegrTree <- predict(regrTreeTra, newEntity) # predict the price for the new entity using the regression tree
+predictionRegrTree
+set.seed(1) # reproducability
+predictionClassTree <- predict(classTreeb, newEntity, type = 'class') # predict the price for the new entity using the classification tree
+predictionClassTree
+```
+\
+The predicted prices are 7878 from the regression tree and an interval of [4350, 6950) from the classification tree.
+
+### iii)
+
+#### Compare the predictions in terms of the predictors that were used, the magnitude of the difference between the two predictors, and the advantages and disadvantages of the two methods.
+```{r, message=FALSE, warning=FALSE}
+predictionRegrTree
+predictionClassTree
+```
+The classification tree returns for the entity the price group [4350, 6950), so the lowest possible price group. The regression tree suggests a price of `r as.integer(predictionRegrTree)`.\
+In the "best" case, the predictions have a difference of `r as.integer(predictionRegrTree - 6950)` and in the worst case `r as.integer(predictionRegrTree)`. Since the classification model selected the lowest possible price group, one cannot know if the model had selected a lower one if there had been any. This makes it tough to compare both results.
+
+Finally, the variable importances according to the the inherit information of the trees are compared between the classification tree and the regression tree.
+
+At first, the classification tree will examined.
+```{r, message=FALSE, warning=FALSE}
+importanceClassTree <- data.frame(classTreeb$variable.importance) # extract the variable importance directly from the classification tree
+importanceClassTree <- rownames_to_column(importanceClassTree, var = "Variables") # set the column name of the variables to "Variables"
+importanceClassTree <- data.table("Variables" = importanceClassTree$Variables, "Importance" = importanceClassTree$classTreeb.variable.importance) # make it a datatable
+importanceClassTree <- importanceClassTree[1:4,] # select the 4 most important ones
+```
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(importanceClassTree, aes(x = reorder(Variables, desc(Importance)), y = Importance)) + # create a new ggplot with importance as data and reorder the data by descending importance
+  geom_bar(stat = "identity") + # barplot with stat = "identity
+  labs(title = "The most important variables for the classification tree", x = element_blank()) # set title and empty x-axis
+```
+
+The same approach will be followed for the regression tree.
+```{r, message=FALSE, warning=FALSE}
+importanceRegrTree <- data.frame(regrTreeSmall$variable.importance) # extract the variable importance directly from the classification tree
+importanceRegrTree <- rownames_to_column(importanceRegrTree, var = "Variables") 
+importanceRegrTree <- data.table("Variables" = importanceRegrTree$Variables, "Importance" = importanceRegrTree$regrTreeSmall.variable.importance)
+importanceRegrTree <- importanceRegrTree[1:4,]
+```
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(importanceRegrTree, aes(x = reorder(Variables, desc(Importance)), y = Importance)) + # create a new ggplot with importance as data and reorder the data by descending importance
+  geom_bar(stat = "identity") + # barplot with stat = "identity
+  labs(title = "The most important variables for the regression tree", x = element_blank()) # set title and empty x-axis
+```
+
+Both trees rank Age as the most important one and include mileage and HP on the ranks 2 to 4. The regression tree sees automatic air-condition on the second rank while the classification tree includes quarterly tax on rank 4.\
+
+Comparing the methods
+Classification trees can be used when one has categorical values for the dependent variable while regression trees can only be used for numerical values in the dependent variable. As could be seen in this task, numerical values can be turned into categorical ones, what is not possible the way around. So, classification trees can be used in more situations.\
+Depending on the aim of the tree, it can be useful to obtain a single value, when one should use a regression tree or an interval, when one should use a classification tree.
+
+## References
+
+### Packages
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of
+  `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  Kuhn M (2022). _caret: Classification and Regression Training_.
+  R package version 6.0-93,
+  <https://CRAN.R-project.org/package=caret>.
+  
+  Harrell Jr F (2022). _Hmisc: Harrell Miscellaneous_. R package
+  version 4.7-1, <https://CRAN.R-project.org/package=Hmisc>.
+  
+  Therneau T, Atkinson B (2022). _rpart: Recursive Partitioning
+  and Regression Trees_. R package version 4.1.16,
+  <https://CRAN.R-project.org/package=rpart>.
+  
+  Milborrow S (2022). _rpart.plot: Plot 'rpart' Models: An
+  Enhanced Version of 'plot.rpart'_. R package version 3.1.1,
+  <https://CRAN.R-project.org/package=rpart.plot>.
+  
+  Wickham H, Averick M, Bryan J, Chang W, McGowan LD, François R,
+  Grolemund G, Hayes A, Henry L, Hester J, Kuhn M, Pedersen TL,
+  Miller E, Bache SM, Müller K, Ooms J, Robinson D, Seidel DP,
+  Spinu V, Takahashi K, Vaughan D, Wilke C, Woo K, Yutani H
+  (2019). “Welcome to the tidyverse.” _Journal of Open Source
+  Software_, *4*(43), 1686. doi:10.21105/joss.01686
+  <https://doi.org/10.21105/joss.01686>.
+  
+  Bolker B, Warnes G, Lumley T (2022). _gtools: Various R
+  Programming Tools_. R package version 3.9.3,
+  <https://CRAN.R-project.org/package=gtools>.

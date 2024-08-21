@@ -1,0 +1,312 @@
+---
+title: '12.3'
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+
+As a first step, the necessary packages will be loaded.
+```{r, message=FALSE, warning=FALSE}
+library(naniar) # for missing values analysis
+library(data.table) # package to handle the data in the data table format
+library(dplyr) # package for function "filter"
+library(mda) # package for discriminant analysis
+library(caret) # package with several function, here used for the confusionMatrix() function
+library(DiscriMiner) # package for discriminant analysis, especially for getting the constants
+library(MASS) # package for the function lda
+library(knitr) # package with the function kable, needed for presentation of tables
+```
+
+At first, the data set will be loaded as a data table.
+```{r, message=FALSE, warning=FALSE}
+spambase <- fread("spambase.csv") # read the data set
+```
+
+The data set has the following dimensions.
+```{r, message=FALSE, warning=FALSE}
+dim(spambase) # show the dimensions of the data set
+```
+The data set contains 4,061 observations and 58 features.
+
+The features have the following character.
+```{r, message=FALSE, warning=FALSE}
+str(spambase) # show the character of the features
+```
+All features are numeric, some of them are in integer form, including the dependent variable "Spam" which will be transformed into factors later on.
+
+Due to the amount of features, single plots will not be made to see each one's distribution.
+
+In the following, the missing values analysis will be conducted.
+```{r, message=FALSE, warning=FALSE}
+gg_miss_var(spambase) # plot the missing values, if there are any
+```
+\
+There are no missing values in this data set.
+
+## a)
+
+### To reduce the number of predictors to a manageable size, examine how each predictor differs between the spam and nonspam e-mails by comparing the spam-class average and nonspam-class average. Which are the 11 predictors that appear to vary the most between spam and nonspam e-mails? From these 11, which words or signs occur more often in spam?
+
+First, the each feature will be aggregated by the mean and the median function for spam and nonspam. Then, a new data table "comparison" will be created to store the difference of the features between spam and nonspam. The 11 variables with the biggest difference will be selected for further examination. Throughout the whole document, every analysis will be carried out on the mean and median version since the "average" from the task is actually the mean but having a comparison can be useful.
+
+```{r, message=FALSE, warning=FALSE}
+aggMean <- aggregate(spambase, list(spambase $Spam), FUN=mean) # aggregate by spam and nonspam, using the mean function as a measure
+aggMedian <- aggregate(spambase, list(spambase $Spam), FUN=median) # aggregate by spam and nonspam, using the median function as a measure
+
+# create a new data table t store the results
+comparison <- data.table("name" = "",
+                         "differenceMean" = rep(0, length(spambase)-1),
+                         "differenceMedian" = rep(0, length(spambase)-1),
+                         "meanSpam" = 0,
+                         "meanNonSpam" = 0,
+                         "medianSpam" = 0,
+                         "medianNonSpam" = 0
+                         )
+
+options(scipen=999) # avoid scientific notation
+
+# calculate the difference with a for loop
+for (i in 2:(length(spambase))){ # go through all observations of the data set
+  comparison[i-1,1] <- colnames(aggMean[i]) # take the feature name and add it to the first column for the mean function
+  comparison[i-1,2] <- max(aggMean[1,i]/aggMean[2,i], aggMean[2,i]/aggMean[1,i]) # calculate the ratio between spam and nonspam. Since sometimes the value for spam is bigger and sometimes for nonspam, both ratios are calculated and the maximum is taken to get a comparable ratio for all features
+  comparison[i-1,3] <- max(aggMedian[1,i]/aggMedian[2,i], aggMedian[2,i]/aggMedian[1,i]) # see line above but for median
+  comparison[i-1,4] <- aggMean[2,i] # add the mean for spam
+  comparison[i-1,5] <- aggMean[1,i] # add the mean for nonspam
+  comparison[i-1,6] <- aggMedian[2,i] # add the median for spam
+  comparison[i-1,7] <- aggMedian[1,i] # add the median for nonspam
+}
+```
+
+The following 11 features are the ones with the biggest difference between spam and nonspam.
+```{r, message=FALSE, warning=FALSE}
+comparison <- comparison[order(-differenceMean),] # order by differenceMean
+comparisonMean11 <- comparison[1:11,] # show the 11 values with the biggest difference for mean
+comparisonMean11$name # show the 11 names of the 11 features/words for mean
+
+comparison <- comparison[order(-differenceMedian),] # order by differenceMedian
+comparisonMedian11 <- comparison[1:11,] # show the 11 values with the biggest difference for median
+comparisonMedian11$name # show the 11 names of the 11 features/words for median
+```
+
+Of these 11 features/words, following features/words appear more often in spam than in nonspam.
+
+For the mean method:
+```{r, message=FALSE, warning=FALSE}
+filter(comparisonMean11, meanSpam > meanNonSpam) # show the features/words which appear more often in spam for mean
+```
+
+For the median method:
+```{r, message=FALSE, warning=FALSE}
+filter(comparisonMedian11, medianSpam > medianNonSpam) # show the features/words which appear more often in spam for median
+```
+
+It is obvious that both versions (mean and median) do not have the same or at least similar results at this point. It is to expect that the models will come to different results in the ongoing analyses.
+
+## b)
+
+### Partition the data into training and validation sets, then perform a discriminant analysis on the training data using only the 11 predictors.
+
+This task, as the upcoming ones, will be executed for the variables obtained mean and the median method.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducibility
+trainingMean <- sample(c(TRUE, FALSE), nrow(spambase), replace=TRUE, prob=c(0.6,0.4)) # split the indices in 60:40
+validationMean <- spambase[!trainingMean,] # assign the values that are not corresponding to the 60% training indices to the validation set
+trainingMean <- spambase[trainingMean,] # assign the values that have not been assigned to the validation set to the training set
+
+trainingMean <- trainingMean[, c("cs", "george", "lab", "W_3d", "W_857", "meeting", "telnet", "hp", "hpl", "W_415", "W_000", "Spam")] # reduce training to the 11 selected variables from above (mean)
+validationMean <- validationMean[, c("cs", "george", "lab", "W_3d", "W_857", "meeting", "telnet", "hp", "hpl", "W_415", "W_000", "Spam")] # reduce validation to the 11 selected variables from above (mean)
+
+discriminantModelMean <- lda(Spam ~ ., data = trainingMean) # create the discriminant analysis model for the mean
+
+# Do the same for median
+set.seed(1) # reproducibility
+trainingMedian <- sample(c(TRUE, FALSE), nrow(spambase), replace=TRUE, prob=c(0.6,0.4)) # split the indices in 60:40
+validationMedian <- spambase[!trainingMedian,] # assign the values that are not corresponding to the 60% training indices to the validation set
+trainingMedian <- spambase[trainingMedian,] # assign the values that have not been assigned to the validation set to the training set
+
+trainingMedian <- trainingMedian[, c("all", "our", "will", "free", "your", "C!", "C$", "you", "CAP_long", "CAP_tot", "CAP_avg", "Spam")] # reduce training to the 11 selected variables from above (median)
+validationMedian <- validationMedian[, c("all", "our", "will", "free", "your", "C!", "C$", "you", "CAP_long", "CAP_tot", "CAP_avg", "Spam")] # reduce validation to the 11 selected variables from above (median)
+
+discriminantModelMedian <- lda(Spam ~ ., data = trainingMedian) # create the discriminant analysis model for the median method
+```
+
+## c)
+
+### If we are interested mainly in detecting spam messages, is this model useful? Use the confusion matrix, lift chart, and decile chart for the validation set for the evaluation.
+
+```{r, message=FALSE, warning=FALSE}
+confusionMatrix(as.factor(predict(discriminantModelMean, validationMean)$class), as.factor(validationMean$Spam), positive = "1") # create the confusion matrix for the mean method
+```
+A significant amount of nearly 500 observations has been classified nonspam while being spam, leading to a low sensitivity of 30.32 % and to an overall accuracy of 71.76%.
+
+```{r, message=FALSE, warning=FALSE}
+confusionMatrix(as.factor(predict(discriminantModelMedian, validationMedian)$class), as.factor(validationMedian$Spam), positive = "1") # create the confusion matrix for the median method
+```
+The performance of this model looks better in terms of overall accuracy (82.93%) and sensitivity (67.28%). The number of false negatives has approximately been cut into a half.
+
+In the following, the lift charts will be created for both methods. Based on the confusion matrices, a better performance of the median method is expected here, as well.
+
+At first, the data (predictions and probabilities) will be organized in the data table "summary".
+```{r, message=FALSE, warning=FALSE}
+spamratioMean <- sum(validationMean$Spam)/nrow(validationMean) # calculate the overall spam ratio for the mean validation set
+spamratioMedian<- sum(validationMedian$Spam)/nrow(validationMedian) # calculate the overall spam ratio for the median validation set
+
+summary <- data.table() # create a new data table to store the results
+summary$number <- seq.int(nrow(validationMean)) # enumerate from 1 to the number of observation in validation
+summary$trueMean <- validationMean$Spam # insert the true classifications for the mean validation set
+summary$trueMedian <- validationMedian$Spam # insert the true classifications for the median validation set
+summary$predictionMean <- predict(discriminantModelMean, validationMean)$class # predict the classifications with the discriminant analysis model
+summary$probabilityMean <- predict(discriminantModelMean, validationMean)$posterior[,2] # insert the probabilities resulting from the predictions
+summary$decileMean <- ntile(-summary$probabilityMean, 10) # separate the observations into 10 groups, since it shall be 10 deciles at the end
+summary$predictionMedian <- predict(discriminantModelMedian, validationMedian)$class # predict the classifications with the discriminant analysis model
+summary$probabilityMedian <- predict(discriminantModelMedian, validationMedian)$posterior[,2] # insert the probabilities resulting from the predictions
+summary$decileMedian <- ntile(-summary$probabilityMedian, 10) # separate the observations into 10 groups, since it shall be 10 deciles at the end
+kable(head(summary)) # show the created table
+```
+
+The data from the summary data table will be re-organized to create the lift charts.
+```{r, message=FALSE, warning=FALSE}
+liftchart <- data.table() # create a new data table fro the lift chart
+liftchart$decilesMean <- summary[, sum(trueMean), by = decileMean][,1] # take the decile number for the mean method
+liftchart$decilesMedian <- summary[, sum(trueMedian), by = decileMedian][,1] # take the decile number for the median method
+liftchart$trueMean <- summary[, sum(trueMean), by = decileMean][,2] # sum the number of "1"s for each decile for the mean method
+liftchart$trueMedian <- summary[, sum(trueMedian), by = decileMedian][,2] # sum the number of "1"s for each decile for the median method
+liftchart$number <- summary[, .N, by = decileMean][,2] # take the number of observation for each decile (178 or 179)
+liftchart$liftMean <- (liftchart$trueMean / liftchart$number) / spamratioMean # calculate the lift for each decile for the mean method
+liftchart$liftMedian <- (liftchart$trueMedian / liftchart$number) / spamratioMedian # calculate the lift for each decile for the median method
+kable(liftchart) # show the table
+```
+
+The plot-relevant data from liftchart to a new table liftChartOrdered. Then, the plots will be created.
+```{r, message=FALSE, warning=FALSE}
+# create a data table to store the results
+liftchartOrdered <- data.table("Deciles" = seq(1,10,1),
+                               "Mean" = liftchart[order(decilesMean),]$liftMean,
+                               "Median" = liftchart[order(decilesMedian),]$liftMedian)
+
+liftChart1 <- ggplot(liftchartOrdered, aes(x = as.factor(Deciles), y = Mean)) + # create a new ggplot with the decile on the x - axis and the lift on the y - axis
+  geom_bar(stat = "identity") + # set stat to "identity"
+  scale_x_discrete(labels = paste0(seq(1,10,1),".")) + # create the names for the deciles
+  geom_text(aes(label = round(Mean,2)), vjust = 1.5, colour = "white") + # insert the lift in the bars
+  labs(title = "Lift chart for the mean function",
+       x = "Deciles",
+       y = "Lift") + # set labels
+  ylim(0,2.7) # set y-limits for equal y-axes
+
+liftChart2 <- ggplot(liftchartOrdered, aes(x = as.factor(Deciles), y = Median)) + # create a new ggplot with the decile on the x - axis and the lift on the y - axis
+  geom_bar(stat = "identity") + # set stat to "identity"
+  scale_x_discrete(labels = paste0(seq(1,10,1),".")) + # create the names for the deciles
+  geom_text(aes(label = round(Median,2)), vjust = 1.5, colour = "white") + # insert the lift in the bars
+  labs(title = "Lift chart for the median function",
+       x = "Deciles",
+       y = "Lift") + # set labels
+  ylim(0,2.7) # set y-limits for equal y-axes
+
+require(gridExtra)# required to align two ggplots
+
+grid.arrange(liftChart1, liftChart2, ncol=2) # plot the two liftcharts side-by-side
+```
+
+As expected, the liftchart from the median method has a more appropriate distribution of lift values since there are no deciles whose lift is bigger than the one of a previous decile. This is different for the mean method. Deciles 7, 8 and 9 have values bigger than 0 while deciles 5 and 6 have a zero values. The lift mainly appears in deciles 1 to 4 that reach higher or at least equal values as the first decile of the median method. The median method should be used, here.
+
+## d)
+
+### In the sample, almost 40% of the e-mail messages were tagged as spam. However, suppose tht the actual proportion of spam messages in these email accounts is 10%. Compute the constants of the classification functions to acount for this information.
+
+The solution of tasks d) and e) are following the approach of Shmueli et al (2018), pp. 202, 203.
+
+```{r, message=FALSE, warning=FALSE}
+trainingMean <- data.frame(trainingMean) # convert trainingMean to a data frame
+discriminantModelMean <- linDA(trainingMean[,c(1:11)], as.factor(trainingMean[,12])) # run the discriminant analysis with the linDa function from the "DiscriMiner" package because the model created by this function provides insights about the constants
+
+# show the constants
+discriminantModelMean$functions
+
+trainingMedian <- data.frame(trainingMedian) # convert trainingMean to a data frame
+discriminantModelMedian <- linDA(trainingMedian[,c(1:11)], as.factor(trainingMedian[,12])) # run the discriminant analysis with the linDa function from the "DiscriMiner" package because the model created by this function provides insights about the constants
+
+# show the constants
+discriminantModelMedian$functions
+```
+
+From these values for the constant, the new values for the constant are calculated manually as follows. (Taking the logarithm of the probability of the respective class and add it to these constants.) Again, the results for both methods, mean and median, will be calculated.
+```{r, message=FALSE, warning=FALSE}
+# Constant for nonSpam
+discriminantModelMean$functions[1,1] + log(0.9) # add the logarithm of the assigned probability to the respective constant
+discriminantModelMedian$functions[1,1] + log(0.9)
+
+# Constant for Spam
+discriminantModelMean$functions[1,2] + log(0.1)
+discriminantModelMedian$functions[1,2] + log(0.1)
+```
+The constants for nonSpam had been the bigger ones before and stayed the bigger ones after adding the logarithm of the respective probability for both, the mean and the median method.
+
+## e)
+
+### A spam filter that is based on your model is used, so that only messages that are classified as nonspam are delivered, while messages that are classified spam are quarantined. In this case, misclassifying a nonspam e-mail (as spam) has much heftier results. Suppose that the cost of quarantining a nonspam e-mail is 20 times that of not detecting a spam message. Compute the constants of the classification functions to account for these costs (assume that the proportion of spam is reflected correctly by the sample proportion).
+```{r, message=FALSE, warning=FALSE}
+# To have the initial constants, the model is set up, again.
+discriminantModelMean <- linDA(trainingMean[,c(1:11)], as.factor(trainingMean[,12]))
+discriminantModelMedian <- linDA(trainingMedian[,c(1:11)], as.factor(trainingMedian[,12]))
+
+# Constant for nonSpam
+discriminantModelMean$functions[1,1] + log(20) # add the logarithm of the assigned "damage" to the respective constant
+discriminantModelMedian$functions[1,1] + log(20)
+
+# Constant for Spam
+discriminantModelMean$functions[1,2] + log(1)
+discriminantModelMedian$functions[1,2] + log(1)
+```
+The same conclusion as for d) can be drawn.
+
+## References
+
+### Books
+
+Shmueli, G., Bruce, P., Yahav, I., Patel, N., Lichtendahl, K. (2018): Data Mining for Business Analytics. Wiley.
+
+### Packages
+
+  Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data Structures,
+  Summaries, and Visualisations for Missing Data_. R package version
+  0.6.1, <https://CRAN.R-project.org/package=naniar>.
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of
+  `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+
+  Wickham H, François R, Henry L, Müller K (2022). _dplyr: A Grammar
+  of Data Manipulation_. R package version 1.0.10,
+  <https://CRAN.R-project.org/package=dplyr>.
+
+  Leisch SobTH&RTORpbF, Hornik K, code. BDRBNhcttuot (2022). _mda:
+  Mixture and Flexible Discriminant Analysis_. R package version
+  0.5-3, <https://CRAN.R-project.org/package=mda>.
+
+  Kuhn M (2022). _caret: Classification and Regression Training_. R
+  package version 6.0-93, <https://CRAN.R-project.org/package=caret>.
+
+  Sanchez G (2013). _DiscriMiner: Tools of the Trade for Discriminant
+  Analysis_. R package version 0.1-30, <http://www.gastonsanchez.com>.
+
+  Venables, W. N. & Ripley, B. D. (2002) Modern Applied Statistics
+  with S. Fourth Edition. Springer, New York. ISBN 0-387-95457-0
+  
+  Yihui Xie (2022). knitr: A General-Purpose Package for Dynamic Report Generation in R. R package version
+  1.40.
+
+  Yihui Xie (2015) Dynamic Documents with R and knitr. 2nd edition. Chapman and Hall/CRC. ISBN 978-1498716963
+
+  Yihui Xie (2014) knitr: A Comprehensive Tool for Reproducible Research in R. In Victoria Stodden, Friedrich
+  Leisch and Roger D. Peng, editors, Implementing Reproducible Computational Research. Chapman and Hall/CRC.
+  ISBN 978-1466561595
+
+

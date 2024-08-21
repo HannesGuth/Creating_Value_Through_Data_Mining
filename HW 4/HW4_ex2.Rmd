@@ -1,0 +1,358 @@
+---
+title: "Task 13.2"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+
+At first, the libraries that will be used troughout the dicument will be loaded.
+```{r, message=FALSE, warning=FALSE}
+library(data.table) # package to handle datatables
+library(naniar) # package for missing values analysis
+library(rpart) # package for the classification tree
+library(dplyr) # package for ntile
+library(adabag) # package for bagging and boosting
+library(randomForest) # package for the random forest function
+library(knitr) # for plotting tables
+```
+
+The dataset will be loaded as following.
+```{r, message=FALSE, warning=FALSE}
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining/Homework 4/13.2") # set the working directory
+auctions <- fread("eBayAuctions.csv") # read the dataset as a data table
+```
+
+```{r, message=FALSE, warning=FALSE}
+dim(auctions) # show the dimensions of the dataset
+```
+The data table consists of 1972 observations and 8 features.
+
+The 8 features will be looked at more in detail, now.
+```{r, message=FALSE, warning=FALSE}
+str(auctions) # give the class and first values of each feature
+```
+Category, currency and endDay are character strings while all others are numeric or integers. The variable "Competitive?" is binary.
+
+In the following, it will be examined if there are missing values for any variables.
+```{r, message=FALSE, warning=FALSE}
+gg_miss_var(auctions) # plots the missing values for each variable
+```
+\
+There are no missing values in this dataset.
+
+Now, an overview over the features will be given graphically.
+```{r message=FALSE, warning=FALSE}
+# plot the graph for Category extra because of its size
+cat <- auctions[, .N, by = Category] # extract the needed data
+ggplot(cat, aes(x = reorder(Category, -N), y = N)) + # create a new ggplot with reordering the categories by their number of occurrence
+  geom_bar(stat = "identity", fill="grey", colour = "black") + # create the bar element and set the appearance
+  coord_flip() + # change x- and y-axis
+  geom_text(aes(label=Category), size = 2, position = position_dodge2(width = 0.5), hjust = 0.65) + # add labels inside the diagram
+  theme(axis.ticks.y = element_blank(), # no y-axis ticks
+        axis.text.y = element_blank(), # no label for the y-axis
+        axis.text = element_text(size = 10), # axis labels shall be at size 10
+        axis.title=element_text(size=10), # the axis title shall have the size 10
+        plot.title = element_text(size=10), # the title of the plot shall have the size 10
+        panel.grid.major = element_blank(), # no grid in the background
+        panel.grid.minor = element_blank(), # no grid in the background
+        panel.background = element_blank()) + # no colored background
+  labs(title = "Category", y = "Number", x = "") # create the title and the axis labels, they are switched because coord_flip was used above
+```
+```{r, message=FALSE, warning=FALSE}
+par(mfrow=c(2,4)) # set the grid for the left features
+
+# plot barplots/histogram for all of the features and set the titles and x-axis labels, las = 3: Flip the x axis labels by 90 degree.
+barplot(sort(table(auctions$currency), decreasing = TRUE), las = 3, main = "Currency")
+hist(auctions$sellerRating, main = "sellerRating", xlab = "sellerRating")
+hist(auctions$Duration, main = "Duration", xlab = "Duration")
+barplot(sort(table(auctions$endDay), decreasing = TRUE), las = 3, main = "endDay")
+hist(auctions$ClosePrice, main = "ClosePrice", xlab = "ClosePrice")
+hist(auctions$OpenPrice, main = "OpenPrice", xlab = "OpenPrice")
+hist(auctions$`Competitive?`, main = "Competitive?", xlab = "Competitive?")
+```
+The by far biggest category is Music/Movie/Game with over 400 items, followed by Collectibles and Toys/Hobbies, each with about 230 items.\
+The dominant currency is USD, followed by EUR and GBP. These are the only currencies in the data. sellerRating has most observation at a very low level, there are only a few observations at up 30,000.\
+Duration seems to have a normal.like distribution with the highest value at 6-7.\
+The most frequent endDay is Monday with over 500 observations, followed by the weekend days. The rest of the week has fewer than 300 observations, each day.\
+ClosePrice and OpenPrice, both, have a the most observations at a very low level. The scale goes up to 900, but with barely any observation, there.\
+Roughly the half of the observations is competitive.
+
+## Data preparation
+
+The data will be divided into a validation set and a training set. Also, change selected variables to "factor".
+
+```{r, message=FALSE, warning=FALSE}
+setnames(auctions, "Competitive?", "Competitive") # change names of the dependent variable
+set.seed(1) # for reproducability
+trainingIndex <- sample(c(TRUE, FALSE), nrow(auctions), replace=TRUE, prob=c(0.6,0.4)) # give 60% of the indices of the dataset to trainingIndex
+training <- auctions[trainingIndex, ] # assign the corresponding values to training
+validation <- auctions[!trainingIndex, ] # assign the values that have not been assigned to to training to validation
+
+training <- as.data.frame(training) # make training a data frame
+training[,8] <- as.factor(training$Competitive) # make the dependent variable a factor for the training set
+validation <- as.data.frame(validation) # make validation a data frame
+validation[,8] <- as.factor(validation$Competitive) # make training a factor for the validation set
+training[,1] <- as.factor(training[,1]) # make also Category a factor for the training set
+validation[,1] <- as.factor(validation[,1]) # make also Category a factor for the validation set
+```
+
+## a)
+
+### Run a classification tree, using the default controls of rpart(). Looking at the validation set, what is the overall accuracy? What is the lift on the first decile?
+
+At first, summarizing data table will be created.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+treeModel <- rpart(as.factor(training$Competitive) ~ ., training[,-8]) # apply rpart on the training set to create the model for the classification tree
+# create a summary data table
+
+modelSummary <- data.table("Number" = seq.int(nrow(validation)), # numerate through all observations of the validation set
+                           "True" = as.numeric(as.character(validation$Competitive)), # fill in the true outcomes of the validation set for competitive
+                           "predictions" = as.numeric(as.character(predict(treeModel, validation, type = "class"))), # fill in the classification predictions of the model for the validation set
+                           "probabilities" = as.numeric(as.character(predict(treeModel, validation[,-9], type = "prob")[,2])) # fill in the probabilities that "1" would be the correct prediction for the validation set
+                           )
+confusionMatrix(as.factor(modelSummary$predictions), validation$Competitive) # show the confusion matrix
+```
+The classification tree has an overall accuracy of 81.01%.
+
+Now, a data table for the lift will be created.
+```{r, message=FALSE, warning=FALSE}
+ratio = sum(as.numeric(as.character(modelSummary$True)))/nrow(modelSummary) # save the probability of true values on the whole data set
+
+modelSummary$Decile <- ntile(-modelSummary$probabilities,10) # create deciles (10) of approximately the same size (79 or 80)
+
+liftChart <- data.table() # create a new data table to store the information to clculate the lift(s) and plot the lift chart later on
+liftChart$Deciles <- modelSummary[,sum(True), by = Decile][,1] # save the decile in the data table
+liftChart$True <- modelSummary[,sum(True), by = Decile][,2] # save the number of "1"s for each decile
+liftChart$Number <- modelSummary[, .N, by = Decile][,2] # save the number of observations for each decile
+liftChart$Lift <- (liftChart$True/liftChart$Number)/ratio # calculate the lift: ratio of positive observations to the number of observation in this decile per the average ratio
+liftChart <- liftChart[order(rank(Deciles))] # order the lift chart by Deciles
+liftChart <- as.data.frame(liftChart) # make the data table a data frame
+kable(liftChart) # show the lift chart
+```
+The first decile has a lift of 1.78. The probability of hitting a competitive observation is here 78% higher than on average.
+
+In addition, the decile-wise lift chart will be plotted.
+```{r, message=FALSE, warning=FALSE}
+ggplot(liftChart, aes(x=as.factor(Deciles), y=Lift)) + # create a new gglplot with the "deciles" on x-axis and their lift on the y-axis
+  geom_bar(stat = "identity") + # set stat to identity
+  geom_text(aes(label = round(Lift,2)), vjust = 1.5, colour = "white") + # add the lift in numbers to the bars
+  scale_x_discrete(labels = paste0(seq(1,10,1),".")) + # label the "deciles", here, approximate values are used. Since some "deciles" have 79 and some 80 observation, they are not precisely "deciles" but this simplification is taken into account, here.
+  labs(title = "Lift chart for the classification tree", x = "Deciles") # set the title and label the x-axis
+```
+\
+One can easily see that the model was not very accurate since there are deciles that have a higher lift than the ones before, like the second and the third have higher lifts than the first one and 7-9 have higher lifts than 6.
+
+```{r, message=FALSE, warning=FALSE}
+# the following names will be re-used for the next approaches, so the variables are deleted here
+rm(modelSummary) # delete the summary table
+rm(liftChart) # delete the lift chart table
+```
+
+## b)
+
+### Run a boosted tree with the same predictors (use function boosting() in the adabag package). For the validation set, what is the overall accuracy? What is the lift on the first decile?
+
+At first, the model is set up and the resulting data are stored in a data table as a preparation for the lift calculation.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+training[,1] <- as.factor(training[,1]) # make Category a factor
+boostedModel <- boosting(Competitive ~ ., data = training) # train the boosting model with the function boosting
+boostedPrediction <- as.factor(predict(boostedModel, validation, type = "class")$class) # let the boosted model predict the outcomes for the validation set and make the outcomes factors
+confusionMatrix(boostedPrediction, validation$Competitive) # show the confusion matrix
+```
+The overall accuracy here is 88.63% and therefore better than before.
+```{r, message=FALSE, warning=FALSE}
+modelSummary <- data.table("Number" = seq.int(nrow(validation)), # enumerate through the data table
+                           "True" = as.numeric(as.character(validation$Competitive)), # insert the true values for the outcomes in the validation set
+                           "predictions" = as.numeric(as.character(predict(boostedModel, validation, type = "class")$class)), # predict the outcomes for the validation set with the booseted model
+                           "probabilities" = as.numeric(as.character(predict(boostedModel, validation, type = "prob")$prob[,2])) # insert the probabilities from the boosted model, that "1" is the right prediction
+)
+
+kable(head(modelSummary)) # show the first 6 rows of the created data table
+```
+
+In the following, the table for the lift calculation and the lift chart will be created.
+
+```{r, message=FALSE, warning=FALSE}
+modelSummary$Decile <- ntile(-modelSummary$probabilities,10) # "split" the data table into deciles, according to their probabilities of "1" being the right answer
+
+liftChart <- data.table() # create a new datatable
+liftChart$Deciles <- modelSummary[,sum(True), by = Decile][,1] # insert the 10 deciles
+liftChart$True <- modelSummary[,sum(True), by = Decile][,2] # sum the number of "1" s by each decile
+liftChart$Number <- modelSummary[, .N, by = Decile][,2] # assign the number of observations to each decile
+liftChart$Lift <- (liftChart$True/liftChart$Number)/ratio # calculate the ratio between the percentage of "1"s in all observations in this decile to the average ratio over the whole dataset
+liftChart <- liftChart[order(rank(Deciles))] # order the lift chart by Deciles
+liftChart <- as.data.frame(liftChart) # make the liftChart data table a data frame
+kable(liftChart) # show the lift chart
+```
+The lift of the first decile is 1.897, so it is 89.7% more likely that a random guess in this group leads to a "success" than a random guess in the whole set.
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(liftChart, aes(x=as.factor(Deciles), y=Lift)) + # create a new ggplot with  the decile in the x-axis and their lift on the y-axis
+  geom_bar(stat = "identity") + # set stat to identity
+  geom_text(aes(label = round(Lift,2)), vjust = 1.5, colour = "white") + # label the bars with their lift
+  scale_x_discrete(labels = paste0(seq(10,100,10),"%")) + # label the x-axis
+  labs(title = "Lift chart for the boosted model", x = "Deciles") # set the title and the x-axis label
+```
+The chart looks improved, compared to the one before. In most cases, the lift and therefore the bars are decreasing, the higher the decile becomes. Only the last decile is bigger than a previous one.
+
+```{r, message=FALSE, warning=FALSE}
+# remove both tables, modelSummary and liftChart
+rm(modelSummary)
+rm(liftChart)
+```
+
+## c)
+
+### Run a bagged tree with the same predictors (use function bagged() in the adabag package). For the validation set, what is the overall accuracy? What is the lift on the first decile?
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+baggedModel <- bagging(Competitive ~ ., data = training) # train a model with the bagging method
+baggedPrediction <- as.factor(predict(baggedModel, validation, type = "class")$class) # predict the values for the validation set and make them factors
+confusionMatrix(baggedPrediction, validation$Competitive) # create and show the confusion matrix
+modelSummary <- data.table("Number" = seq.int(nrow(validation)), # enumerate through all observations
+                           "True" = as.numeric(as.character(validation$Competitive)), # insert the true values for the validation set
+                           "predictions" = as.factor(predict(baggedModel, validation, type = "class")$class), # insert the predictions from the bagged model for the validation set
+                           "probabilities" = predict(baggedModel, validation, type = "prob")$prob[,2]) # insert the probabilties from the bagged model that "1" is the correct prediction
+modelSummary$Decile <- ntile(-modelSummary$probabilities,10) # "divide" the dataset into 10 intervals of similar size (79 or 80 observations) according to probabilities
+```
+The accuracy is 85.55%, so approximately 3% higher than with the "normal" classification tree but also 3% worse than with the boosting method.
+
+Now, the data for the calculation of the lift and the creation of the lift chart will be prepared.
+```{r, message=FALSE, warning=FALSE}
+liftChart <- data.table() # create a new data table
+liftChart$Deciles <- modelSummary[,sum(True), by = Decile][,1] # insert the deciles
+liftChart$True <- modelSummary[,sum(True), by = Decile][,2] # insert the number of "1"s for each decile
+liftChart$Number <- modelSummary[, .N, by = Decile][,2] # insert the number of observations for each decile
+liftChart$Lift <- (liftChart$True/liftChart$Number)/ratio # calculate the ratio between the ratio of "1"s per observation in this decile and the average ratio of "1"s per observation in all observations
+liftChart <- liftChart[order(rank(Deciles))] # order the lift chart by Deciles
+liftChart <- as.data.frame(liftChart) # make the data table a data frame
+kable(liftChart) # show liftChart
+```
+The lift of the first decile is approximately 1.9.
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(liftChart, aes(x=as.factor(Deciles), y=Lift)) + # create a new ggplot with deciles on the x-axis and their lift on the y-axis
+  geom_bar(stat = "identity") + # set stat to identity
+  geom_text(aes(label = round(Lift,2)), vjust = 1.5, colour = "white") + # label the bars with their lifts
+  scale_x_discrete(labels = paste0(seq(10,100,10),"%")) + # label the x-axis
+  labs(title = "Lift chart for the bagged model", x = "Deciles") # set the title and the x-axis label
+```
+\
+The plot looks very similar to the one from the boosting model from b). Only a few values have changed.
+```{r, message=FALSE, warning=FALSE}
+# remove both tables, modelSummary and liftChart
+rm(modelSummary)
+rm(liftChart)
+```
+
+## d)
+
+### Run a random forest (use function randomForest() with argument mtry = 4). Compare the bagged tree to the random forest in terms of validation accuracy and lift on the first decile. How are the two methods conceptually different? {.tabset}
+
+#### Model and lift
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+randomForestModel <- randomForest(Competitive ~ ., training, mtry = 4) # train the random forest model with the training data
+randomForestPrediction <- predict(randomForestModel, validation, type = "class") # predict the outcomes for the validation set
+confusionMatrix(randomForestPrediction, validation$Competitive) # create and show the confusion matrix
+
+modelSummary <- data.table("Number" = seq.int(nrow(validation)), # enumerate through all observations in the validation set
+                           "True" = as.numeric(as.character(validation$Competitive)), # insert the correct value from the validation set
+                           "predictions" = as.numeric(as.character(predict(randomForestModel, validation, type = "class"))), # insert the prediction from the random forest model
+                           "probabilities" = as.numeric(as.character(predict(randomForestModel, validation, type = "prob")[,2])) # insert the probabilties from the random forest model that "1" is the right prediction
+                           )
+
+modelSummary$Decile <- ntile(-modelSummary$probabilities,10) # "divide" the validation set into 10 deciles of similar size, according to probabilities
+```
+The overall accuracy is now 87.34%, so it has increased, again.
+
+Now, the data for the lift calculation and the lift chart are prepared and presented.
+```{r, message=FALSE, warning=FALSE}
+liftChart <- data.table() # create a new data table
+liftChart$Deciles <- modelSummary[,sum(True), by = Decile][,1] # enumerate through all observations
+liftChart$True <- modelSummary[,sum(True), by = Decile][,2] # insert the true value from the validation set
+liftChart$Number <- modelSummary[, .N, by = Decile][,2] # insert the number of observations for each decile
+liftChart$Lift <- (liftChart$True/liftChart$Number)/ratio # calculate the ratio between the number of "1"s per each decile and the overall ratio of the number of "1"s per observation in the validation set
+liftChart <- liftChart[order(rank(Deciles))] # order the lift chart by Deciles
+liftChart <- as.data.frame(liftChart) # make the data table a data frame
+kable(liftChart) # show the table
+```
+
+The lift is again approximately 1.9.
+```{r, message=FALSE, warning=FALSE}
+ggplot(liftChart, aes(x=as.factor(Deciles), y=Lift)) + # create a new ggplot with the deciles on the x-axis and their lift on the y-axis
+  geom_bar(stat = "identity") + # set stat to identity
+  geom_text(aes(label = round(Lift,2)), vjust = 1.5, colour = "white") + # insert the lifts into their bars
+  scale_x_discrete(labels = paste0(seq(10,100,10),"%")) + # label the x-axis
+  labs(title = "Lift chart for the random forest", x = "Deciles") # create the title and label the x-axis
+```
+\
+The chart looks like the random forest brought some enhancements, especially in the lower deciles, there is now no obvious inaccuracy anymore. The bars are throughout decreasing.
+
+```{r, message=FALSE, warning=FALSE}
+# remove both tables, modelSummary and liftChart
+rm(modelSummary)
+rm(liftChart)
+```
+
+#### Conceptual difference
+
+The bagging approach stands for Bootstrapping Aggregation. It takes a number of sub samples of the training dataset and runs regression or classification trees on it, so at the end there are as many trees as there are bootstrap samples. Then, when applying this model to a new (validation) dataset, the different decision trees of the model might have different outcomes for one prediction. The average can be taken or a majority vote might be executed for regression and classification trees, respectively. (Shmueli et. al. 2018, p. 229). The problem is often that the outcomes of the single trees are highly correlated.\
+For ensembles to work well, it is helpful if the predictions of the single models are uncorrelated. To solve this issue, random forests can be applied. It improves the algorithm in a way that the single trees are learned in a manner that their predictions are less correlated. (Brownlee, 2020)\
+So, random trees are a special way how bagging can be performed.
+
+## References
+
+### Websources
+Brownlee, J., (2020), *Machine Learning Mastery*: Bagging and Random Forest Ensemble Algorithms for Machine Learning. Accessed 04. December 2020, https://machinelearningmastery.com/bagging-and-random-forest-ensemble-algorithms-for-machine-learning/.
+
+### Books
+Shmueli, G., Bruce, P., Yahav, I., Patel, N., Lichtendahl, K. (2018): Data Mining for Business Analytics. Wiley.
+
+### Packages
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of
+  `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+
+  Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data
+  Structures, Summaries, and Visualisations for Missing Data_. R
+  package version 0.6.1,
+  <https://CRAN.R-project.org/package=naniar>.
+
+  Therneau T, Atkinson B (2022). _rpart: Recursive Partitioning and
+  Regression Trees_. R package version 4.1.16,
+  <https://CRAN.R-project.org/package=rpart>.
+
+  Wickham H, François R, Henry L, Müller K (2022). _dplyr: A
+  Grammar of Data Manipulation_. R package version 1.0.10,
+  <https://CRAN.R-project.org/package=dplyr>.
+
+  Alfaro, E., Gamez, M. Garcia, N.(2013). adabag: An R Package for
+  Classification with Boosting and Bagging. Journal of Statistical
+  Software, 54(2), 1-35. URL http://www.jstatsoft.org/v54/i02/.
+
+  A. Liaw and M. Wiener (2002). Classification and Regression by
+  randomForest. R News 2(3), 18--22.
+  
+  Yihui Xie (2022). knitr: A General-Purpose Package for Dynamic Report
+  Generation in R. R package version 1.40.
+
+  Yihui Xie (2015) Dynamic Documents with R and knitr. 2nd edition.
+  Chapman and Hall/CRC. ISBN 978-1498716963
+
+  Yihui Xie (2014) knitr: A Comprehensive Tool for Reproducible Research
+  in R. In Victoria Stodden, Friedrich Leisch and Roger D. Peng, editors,
+  Implementing Reproducible Computational Research. Chapman and Hall/CRC.
+  ISBN 978-1466561595

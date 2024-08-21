@@ -1,0 +1,562 @@
+---
+title: '15.3'
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+
+At first, the packages that are needed throughout the document will be loaded.
+```{r, message=FALSE, warning=FALSE}
+library(naniar) # for missing value analysis
+library(data.table) # for handling data tables
+library(caret) # for the function preProcess
+library(factoextra) # for finding the optimal number of clusters
+library(matrixStats) # for function rowVars
+library(ggplot2) # for graphics
+library(dendextend) # for the dendrogram plot
+library(knitr) # for plotting tables in markdown
+```
+
+```{r, message=FALSE, warning=FALSE}
+cereals <- read.csv("cereals.csv", header = T, na.strings=c("","NA"), row.names = 1) # read the data set
+set.seed(1) # reproducability
+```
+
+Before the analysis, the data set needs to be explored.
+```{r, message=FALSE, warning=FALSE}
+dim(cereals) # show the dimensions of the data set
+```
+The data consist of 77 observations with 15 features.
+
+Now, the type of the features will be examined and the first few values displayed.
+```{r, message=FALSE, warning=FALSE}
+str(cereals) # show the type of the features and the first few values of each feature
+```
+The features "mfr" and "type" are character strings. All others are numeric and integers. "shelf" is in integer form but categorical. Also, on can see that the data are not normalized. That needs to be done later on.\
+
+In this step, missing values will be examined.
+```{r, message=FALSE, warning=FALSE}
+gg_miss_var(cereals) # show missing values
+```
+\
+"potass" has two missing values, "sugars" and "carbo" 1 missing value, each. These need to be removed for the upcoming analysis.
+```{r, message=FALSE, warning=FALSE}
+cereals <- na.omit(cereals) # remove NAs
+```
+In the following, the graphical distribution for the single features will be shown.
+```{r, message=FALSE, warning=FALSE, fig.height = 10, fig.width=10}
+par(mfrow = c(4,4)) # set the grid in which the graphs shall be plotted
+
+# plot the graphs for the single features, using barplots and histograms, setting the titles and x-axis labels
+barplot(table(as.factor(cereals$mfr)), main = "mfr", xlab = "mfr")
+barplot(table(as.factor(cereals$type)), main = "type", xlab = "type")
+hist(cereals$calories, main = "calories", xlab = "calories")
+hist(cereals$protein, main = "protein", xlab = "protein")
+hist(cereals$fat, main = "fat", xlab = "fat")
+hist(cereals$sodium, main = "sodium", xlab = "sodium")
+hist(cereals$fiber, main = "fiber", xlab = "fiber")
+hist(cereals$carbo, main = "carbo", xlab = "carbo")
+hist(cereals$sugars, main = "sugars", xlab = "sugars")
+hist(cereals$potass, main = "potass", xlab = "potass")
+hist(cereals$vitamins, main = "vitamins", xlab = "vitamins")
+barplot(table(as.factor(cereals$shelf)), main = "shelf", xlab = "shelf")
+hist(cereals$weight, main = "weight", xlab = "weight")
+hist(cereals$cups, main = "cups", xlab = "cups")
+hist(cereals$rating, main = "rating", xlab = "rating")
+```
+\
+All features are differently distributed. Noticeable is that type is to the very most part "C". Also, vitamins have their most values central, between 20 and 30 (exactly 25). A few other like fat, fiber, potass and rating seem to be skewed.
+
+## Data preparation
+
+Now, the data will be normalized.
+```{r, message=FALSE, warning=FALSE}
+normCereals <- preProcess(cereals, method = c("range")) # estimate the pre-processing transformation from cereals
+normCereals <- predict(normCereals, cereals) # scale the data of the whole cereals data set
+```
+
+## a), b), c) {.tabset}
+
+#### a)
+Apply hierarchical clustering to the data using Euclidean distance to the normalized measurements. Compare the dendrograms from the single linkage and complete linkage, and look at cluster centroids. Comment on the structure of the clusters and on their stability. Hint: To obtain cluster centroids for hierarchical clustering, compute the average values of each cluster members, using the aggregate() function.
+
+#### b)
+Which method leads to the most insightful or meaningful clusters?
+
+#### c)
+Choose one of the methods. How many clusters would you use? What distance is used for this cutoff value? (Look at the dendrogram.)
+
+### Optimal k
+
+In this paragraph, the euclidean distance will be taken and the hierarchical clustering will be executed for single linkage and complete linkage.
+```{r, message=FALSE, warning=FALSE}
+distances <- dist(normCereals, method = "euclidean") # calculate the euclidean distance
+
+single <- hclust(distances, method = "single") # apply single linkage
+complete <- hclust(distances, method = "complete") # apply complete linkage
+```
+
+To figure out how many clusters are optimal in this case, three different methods from the factoextra package will be used.
+The elbow method is the first method.
+```{r, message=FALSE, warning=FALSE}
+fviz_nbclust(scale(cereals[,-c(1,2,12)]), kmeans, method = "wss") + # plot the graph for the elbow
+  labs(subtitle = "Elbow method") # set the subtitle
+```
+\
+This method recommends the use of 6 clusters because until the number of 6, the graph has a negative slope and afterwards, a positive.
+
+The next method is the silhouette method.
+```{r, message=FALSE, warning=FALSE}
+fviz_nbclust(scale(cereals[,-c(1,2,12)]), kmeans, method = "silhouette") + # plot the graph for the silhouette method
+  labs(subtitle = "Silhouette method") # set the subtitle
+```
+\
+This method recommends the use of 10 clusters as can be seen in the vertical line. Since there are roughly 70 observations, the number of 10 seems to high.
+
+The last method is the GAP method.
+```{r, message=FALSE, warning=FALSE}
+fviz_nbclust(scale(cereals[,-c(1,2,12)]), kmeans, method = "gap_stat") + # plot the graph for the gap method
+  labs(subtitle = "Gap method") # set the subtitle
+```
+\
+This method recommends the use of 1 cluster, what also does not seem appropriate for 70 observations.
+
+The number of 6 clusters will be applied.
+
+### Dendrograms
+
+In the following, the dendrogram for the single linkage method is produced.
+
+```{r, message=FALSE, warning=FALSE, fig.height = 8, fig.width=10}
+singleDendObj <- as.dendrogram(single) # create a dendrogram object for the single linkage method
+avgColDend <- color_branches(singleDendObj, k = 6) # set the number of clusters to 6
+plot(avgColDend, ylim = range(0,1.3)) # plot the dendrogram for the single method
+```
+\
+The dendrogram for the single linkage method with 6 different clusters creates 1 very big cluster (in green) and several very small clusters. This does not seem to create a lot of insight.
+
+The next dendrogram is for the complete linkage method.
+```{r, message=FALSE, warning=FALSE, fig.height = 10, fig.width=10}
+completeDendObj <- as.dendrogram(complete) # create a dendrogram object for the complete linkage method
+avgColDend <- color_branches(completeDendObj, k = 6) # set the number of clusters to 6
+plot(avgColDend) # plot the dendrogram for the complete linkage method
+```
+\
+Here, one can also observe smaller and bigger clusters but they are by far more equalized in terms of size. It appears that this method might create the better insights.
+\
+As cutoff-values, the single linkage method uses a value, slightly above 1, like 1.1. For complete linkage, the cutoff value is at around 2.25.
+\
+\
+
+### Examination of clusters {.tabset}
+
+#### Single Linkage
+In this part, the structure of the clusters will be examined, while looking at their centroids.
+
+The process includes plotting the centroids in linegraphs and heatmaps to assess their meaningfulness.
+
+Single Linkage is the first method that is examined.
+```{r, message=FALSE, warning=FALSE}
+# Single
+
+assignment <- as.factor(cutree(single, k = 6)) # get the assignment of the single brands to the clusters
+
+cerealsClusters <- normCereals # assign normCereals to a new variable, cerealsClusters
+cerealsClusters$clusters <- assignment # assign the assignment as a new column to this new variable
+
+centroids <- aggregate(. ~ clusters, data = cerealsClusters[,-c(1:2)], FUN = mean) # take the mean for every feature for every cluster
+
+centroids <- t(centroids) # transpose this data frame
+colnames(centroids) <- c("Cluster1","Cluster2","Cluster3","Cluster4","Cluster5","Cluster6") # set new column names
+
+# make every columns numeric, again
+centroids <- transform(centroids, Cluster1 = as.numeric(Cluster1))
+centroids <- transform(centroids, Cluster2 = as.numeric(Cluster2))
+centroids <- transform(centroids, Cluster3 = as.numeric(Cluster3))
+centroids <- transform(centroids, Cluster4 = as.numeric(Cluster4))
+centroids <- transform(centroids, Cluster5 = as.numeric(Cluster5))
+centroids <- transform(centroids, Cluster6 = as.numeric(Cluster6))
+
+comparisonSingleCentroids <- centroids # save this data for d)
+centroids$names <- rownames(centroids) # assign the names of the brands to a new column
+centroids <- centroids[-1,] # delete the first row because it only saved the cluster names
+centroids$standDev <- as.vector(sqrt(rowVars(as.matrix(centroids[,1:6])))) # calculate every row's standard deviation
+centroids <- as.data.frame(centroids[order(centroids$standDev),]) # order the dataframe by its standard deviation
+kable(centroids) # show the table
+```
+\
+The averages for each cluster and for each feature can be seen in the table above. They are they basis for further scrutiny, at first in form of linegraphs. The table is ordered by standard deviation, so that on the left hand side, there should be the features with less deviations and on the right hand side those with a bigger deviation.
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, features shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster1, colour = "Cluster 1")) + # show the line for the averages of the first cluster
+  geom_path(aes(y=Cluster2, colour = "Cluster 2")) + # same approach for the 2.cluster
+  geom_path(aes(y=Cluster3, colour = "Cluster 3")) + # same approach for the 3.cluster
+  geom_path(aes(y=Cluster4, colour = "Cluster 4")) + # same approach for the 4.cluster
+  geom_path(aes(y=Cluster5, colour = "Cluster 5")) + # same approach for the 5.cluster
+  geom_path(aes(y=Cluster6, colour = "Cluster 6")) + # same approach for the 6.cluster
+  scale_color_manual(values=c("Cluster 1" = "green", "Cluster 2" = "red", "Cluster 3" = "yellow", "Cluster 4" = "black","Cluster 5" = "blue", "Cluster 6" = "orange")) + # set the colors of the lines that represent clusters
+  labs(title = "All clusters", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+As can be seen, the graph is very crowded and no real insights can be gained about the characteristic/structure of the clusters. Therefore, the clusters will be printed with another cluster that can be compared.\
+The first graph will cover clusters 1 and 3.
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster1, colour = "Cluster 1"), size = 1) + # show the line for the averages of the first cluster
+  geom_path(aes(y=Cluster3, colour = "Cluster 3"), size = 1) + # same approach for the 3. cluster
+  scale_color_manual(values=c("Cluster 1" = "green", "Cluster 3" = "yellow")) + # set the colors of the lines that represent clusters
+  labs(title = "Clusters 1 and 3", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+Both clusters seem to be very similar. Cluster 1 has a higher average in sugars and a lower one in rating.
+
+Clusters 2 and 5 are presented in the next graph.
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster2, colour = "Cluster 2"), size = 1) + # show the line for the averages of the 2. cluster
+  geom_path(aes(y=Cluster5, colour = "Cluster 5"), size = 1) + # same approach for the 5. cluster
+  scale_color_manual(values=c("Cluster 2" = "red", "Cluster 5" = "blue")) + # set the colors of the lines that represent clusters
+  labs(title = "Clusters 2 and 5", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+These both clusters have a few similar characteristics like protein, weight, cups and fiber but also differ significantly in carbo, sodium, vitamins and fat. This distinction can be drawn very clearly.
+
+The last two clusters are 4 and 6.
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster4, colour = "Cluster 4"), size = 1) + # show the line for the averages of the 4. cluster
+  geom_path(aes(y=Cluster6, colour = "Cluster 6"), size = 1) + # same approach for the 6.cluster
+  scale_color_manual(values=c("Cluster 4" = "black", "Cluster 6" = "orange")) + # set the colors of the lines that represent clusters
+  labs(title = "Clusters 4 and 6", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+In contrast to the graphs before, no clear statements can be made except that both clusters tend to have low values in nearly all features.
+\
+To evaluate the previously gained insights, another form of visualization, the heatmap, will be used. This represents, due to clarity, only the average values of each cluster and not the value of each brand and its assignment to a cluster.
+```{r, message=FALSE, warning=FALSE}
+heatmap(as.matrix(centroids[,1:6])) # show the heatmap of clusters and their averages for the features
+```
+\
+\
+Cluster 1 and Cluster 3 seem to be similar: Both have high values in rating, fiber, protein and potass.\
+Cluster 2 has high values in fat and calories.\
+Cluster 6 has low values in weight, protein, sodium, calories, calories, sugar and potass.\
+Cluster 4 has a lot of average values.\
+Cluster 5 has high values in vitamins and carbo.\
+
+#### Complete Linkage
+
+The process will be the same as for single linkage.
+```{r, message=FALSE, warning=FALSE}
+# Complete
+
+# re-do the whole process from above for complete linkage
+assignment <- as.factor(cutree(complete, k = 6)) # get the assignment of single brand to the clusters 
+
+cerealsClusters <- normCereals # assign normCereals to cerealsClusters and therefore overwrite it
+cerealsClusters$clusters <- assignment # assign the assignment as a new column to this new variable
+centroids <- aggregate(. ~ clusters, data = cerealsClusters[,-c(1:2)], FUN = mean) # aggregate the table by clusters, by creating the mean for each feature for each cluster
+
+centroids <- t(centroids) # transpose the previous
+colnames(centroids) <- c("Cluster1","Cluster2","Cluster3","Cluster4","Cluster5","Cluster6") # set new column names
+
+# since transposing transformed the numeric values into characters, they have to be reconverted for each cluster
+
+centroids <- transform(centroids, Cluster1 = as.numeric(Cluster1))
+centroids <- transform(centroids, Cluster2 = as.numeric(Cluster2))
+centroids <- transform(centroids, Cluster3 = as.numeric(Cluster3))
+centroids <- transform(centroids, Cluster4 = as.numeric(Cluster4))
+centroids <- transform(centroids, Cluster5 = as.numeric(Cluster5))
+centroids <- transform(centroids, Cluster6 = as.numeric(Cluster6))
+
+centroids$names <- rownames(centroids) # assign the names of the features as an extra column
+centroids <- centroids[-1,] # remove the first row because there ar the names of the clusters
+centroids$standDev <- as.vector(sqrt(rowVars(as.matrix(centroids[,1:6])))) # calculate the standard deviation for each feature
+centroids <- as.data.frame(centroids[order(centroids$standDev),]) # order the table following the standard deviation for the linegraph
+```
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster1, colour = "Cluster 1")) + # show the line for the averages of the first cluster
+  geom_path(aes(y=Cluster2, colour = "Cluster 2")) + # same approach for the 2.cluster
+  geom_path(aes(y=Cluster3, colour = "Cluster 3")) + # same approach for the 3.cluster
+  geom_path(aes(y=Cluster4, colour = "Cluster 4")) + # same approach for the 4.cluster
+  geom_path(aes(y=Cluster5, colour = "Cluster 5")) + # same approach for the 5.cluster
+  geom_path(aes(y=Cluster6, colour = "Cluster 6")) + # same approach for the 6.cluster
+  scale_color_manual(values=c("Cluster 1" = "green", "Cluster 2" = "red", "Cluster 3" = "yellow", "Cluster 4" = "black", "Cluster 5" = "blue", "Cluster 6" = "orange")) + # set the colors of the lines that represent clusters
+  labs(title = "All clusters", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+As for the single linkage, plotting all clusters in the same graph does not create a lot of insight. Therefore, the graphs of the single clusters will be plotted with comparable ones in the following.\
+
+The first couple is cluster 2 and cluster 4.
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster2, colour = "Cluster 2"), size = 1.5) + # show the line of averages in the centroid for cluster 2
+  geom_path(aes(y=Cluster4, colour = "Cluster 4"), size = 1.5) + # same approach for the 4.cluster
+  scale_color_manual(values=c("Cluster 2" = "red", "Cluster 4" = "black")) + # set the colors of the lines that represent clusters
+  labs(title = "Clusters 2 and 4", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+Clusters 2 and 4 are quite similar, except the values for sodium and fat that differentiates these clusters.
+
+Adding cluster 1 to this graph shows that this cluster is in many cases the opposite of 2 and 4. Only in weight, vitamins and carbo, they have similar values.
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster1, colour = "Cluster 1"), size = 2) + # show the line for the averages of the first cluster
+  geom_path(aes(y=Cluster2, colour = "Cluster 2")) + # same approach for the 2. cluster
+  geom_path(aes(y=Cluster4, colour = "Cluster 4")) + # same approach for the 4. cluster
+  scale_color_manual(values=c("Cluster 1" = "green", "Cluster 2" = "red", "Cluster 4" = "black")) + # set the colors of the lines that represent clusters
+  labs(title = "Clusters 1, 2 and 4", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+The cluster 3, 5 and 6 are shown in the following plot.
+```{r, message=FALSE, warning=FALSE}
+ggplot(centroids, aes(x=reorder(names, standDev), group = 1)) + # create a new ggplot, order by standard deviation, brands shall be on the x-axis
+  theme(axis.text.x = element_text(angle = 90)) + # flip the x-axis labels by 90 degree
+  geom_path(aes(y=Cluster3, colour = "Cluster 3"), size = 1.5) + # show the line for the averages of the third cluster
+  geom_path(aes(y=Cluster5, colour = "Cluster 5"), size = 1.5) + # same approach for the 5. cluster
+  geom_path(aes(y=Cluster6, colour = "Cluster 6"), size = 1.5) + # same approach for the 6. cluster
+  scale_color_manual(values=c("Cluster 3" = "yellow", "Cluster 5" = "blue", "Cluster 6" = "orange")) + # set the colors of the lines that represent clusters
+  labs(title = "Clusters 3, 5 and 6", x = "Features", y = "Value") + # set title and axis titles
+  theme(legend.title = element_blank()) # remove the title of the legend
+```
+\
+Clusters 3 and 5 are similar, they have in most cases average values in the feature averages. Cluster 6 is not very similar since it has very low values for all features, except cups, carbo and rating (and shelf but this is categorical).
+```{r, message=FALSE, warning=FALSE}
+heatmap(as.matrix(centroids[,1:6])) # show the heatmap for the featrue averages of all clusters
+```
+\
+Cluster 1 has high values in potass, fiber, protein and rating.\
+Cluster 2 has high values in fat, cups and calories.\
+Cluster 6 has low values in weight, sodium, calories and sugars.\
+Cluster 5 has a lot of average values but a high value in vitamins.\
+Cluster 4 has low values in protein and rating but a high value in sugars.\
+Cluster 3 has a lot of average values but a high value in carbo.\
+
+#### Stability
+
+In this chapter, the data set will be re-sampled and 80% will be taken to conduct the clustering again. Afterwards, the centroids of the 2 methods will be compared to the centroids from before for both methods. The difference in the values will be summed up and compared between single linkage and complete linkage. 
+```{r, message=FALSE, warning=FALSE}
+set.seed(1) # reproducability
+cerealsTrain <- sample(c(TRUE, FALSE), nrow(cereals), replace=TRUE, prob=c(0.8,0.2)) # take 80% of the indices to cerealsTrain
+#cerealsValidation <- cereals[!cerealsTrain, ]
+cerealsTrain <- cereals[cerealsTrain, ] # assign the corresponding values for the indices
+
+normCerealsTrain <- preProcess(cerealsTrain, method = c("range")) # estimate the pre-processing transformation from cereals
+normCerealsTrain <- predict(normCerealsTrain, cereals) # scale the data of the data set
+
+distances80 <- dist(normCerealsTrain, method = "euclidean") # take the euclidean distance
+```
+
+```{r, message=FALSE, warning=FALSE}
+single80 <- hclust(distances80, method = "single") # apply hierarchical clustering for the single linkage method
+complete80 <- hclust(distances80, method = "complete") # apply hierarchical clustering with the complete linkage method
+
+assignmentSingle80 <- as.factor(cutree(single80, k = 6)) # take the cluster assignment form the single method
+assignmentComplete80 <- as.factor(cutree(complete80, k = 6)) # take the cluster assignment form the complete method
+
+singleClusters80 <- normCerealsTrain # assign normCerealsTrain to singleClusters80
+completeClusters80 <- normCerealsTrain # assign normCerealsTrain to completeClusters80
+
+completeClusters80$clusters <- assignmentComplete80 # add the assignments of clusters for the single linkage
+centroidsComplete80 <- aggregate(. ~ clusters, data = completeClusters80[,-c(1:2)], FUN = mean) # aggregate by clusters and take the mean for each feature
+
+singleClusters80$clusters <- assignmentSingle80 # add the assignments of clusters for the complete linkage
+centroidsSingle80 <- aggregate(. ~ clusters, data = singleClusters80[,-c(1:2)], FUN = mean) # aggregate by clusters and take the mean for each feature
+
+centroidsSingle80 <- t(centroidsSingle80) # transpose the data for centroidsSingle80
+centroidsComplete80 <- t(centroidsComplete80) # transpose the data for centroidsComplete80
+
+# Assign new column names
+colnames(centroidsSingle80) <- c("Cluster1","Cluster2","Cluster3","Cluster4","Cluster5","Cluster6")
+colnames(centroidsComplete80) <- c("Cluster1","Cluster2","Cluster3","Cluster4","Cluster5","Cluster6")
+
+# make the entries that have been transformed to characters while transposing numeric, again, for both, the single and the complete linkage method
+centroidsSingle80 <- transform(centroidsSingle80, Cluster1 = as.numeric(Cluster1))
+centroidsSingle80 <- transform(centroidsSingle80, Cluster2 = as.numeric(Cluster2))
+centroidsSingle80 <- transform(centroidsSingle80, Cluster3 = as.numeric(Cluster3))
+centroidsSingle80 <- transform(centroidsSingle80, Cluster4 = as.numeric(Cluster4))
+centroidsSingle80 <- transform(centroidsSingle80, Cluster5 = as.numeric(Cluster5))
+centroidsSingle80 <- transform(centroidsSingle80, Cluster6 = as.numeric(Cluster6))
+
+centroidsComplete80 <- transform(centroidsComplete80, Cluster1 = as.numeric(Cluster1))
+centroidsComplete80 <- transform(centroidsComplete80, Cluster2 = as.numeric(Cluster2))
+centroidsComplete80 <- transform(centroidsComplete80, Cluster3 = as.numeric(Cluster3))
+centroidsComplete80 <- transform(centroidsComplete80, Cluster4 = as.numeric(Cluster4))
+centroidsComplete80 <- transform(centroidsComplete80, Cluster5 = as.numeric(Cluster5))
+centroidsComplete80 <- transform(centroidsComplete80, Cluster6 = as.numeric(Cluster6))
+
+# delete the first column because it contains the cluster names
+centroidsSingle80 <- centroidsSingle80[-1,]
+centroidsComplete80 <- centroidsComplete80[-1,]
+
+centroidsSingle80$names <- rownames(centroidsSingle80) # get the rownames in an extra column
+centroidsSingle80 <- centroidsSingle80[order(centroidsSingle80$names),1:6] # order the dataframe by the names
+
+centroidsComplete80$names <- rownames(centroidsComplete80) # get the rownames in an extra column
+centroidsComplete80 <- centroidsComplete80[order(centroidsComplete80$names),1:6] # order the dataframe by the names
+
+SingleOldCentroids <- comparisonSingleCentroids # take the saved comparison dataframe for the single linkage method from above
+CompleteOldCentroids <- centroids[order(centroids$names),1:6] # take only the columns that contain the cluster centroids
+
+comparisonSingle <- SingleOldCentroids # create a placeholding data frame that will later on contain the differences in the values in the next step
+comparisonSingle <- centroidsSingle80 - SingleOldCentroids[-1,] # calculate the differences in the values for the single linkage method
+
+orderedOldCentroids <- centroids[order(centroids$names),1:6] # take the first 6 columns of the comparable dataframe (centroids) that still exists from the previous examinations
+comparisonComplete <- orderedOldCentroids # create a new placeholding dataframe that will contain the differences in the values in the next step
+comparisonComplete <- centroidsComplete80 - orderedOldCentroids # calculate the differences in values for the complete linkage method
+
+# calculate the sums of deviations that shall indicate the stability
+
+# create 2 variables that will contain the sums of differences
+sumComplete <- 0
+sumSingle <- 0
+
+for (i in 1:13){ # go through all features
+  for (j in 1:6){ # go through all clusters
+    sumSingle = sumSingle + abs(comparisonSingle[i,j]) # add each difference for the single linkage to the sum
+    sumComplete = sumComplete + abs(comparisonComplete[i,j]) # add each difference for the complete linkage to the sum
+  }
+}
+print(paste("sumSingle:", sumSingle)) # return the result for the single linkage method
+print(paste("sumComplete:", sumComplete)) # return the result for the complete linkage method
+```
+The sum of deviations for the complete linkage method is much lower than the one for the single linkage method. That leads to the fact that it delivers the more stable results.\
+
+After these analyses, the complete linkage should be used, because of the better weighted clusters and its stability.
+
+## d)
+
+### The elementary public schools would like to choose a set of cereals to include in their daily cafeterias. Every day a different cereal is offered, but all cerals should support a healthy diet. For this goal, you are requested to find a cluster of "healthy cereals". Should the data be normalized? If not, how should they be used in the cluster analysis?
+
+The data should not be normalized but standardized.
+
+The approach will be to cluster the whole dataset (as above) and then compare the average values of the clusters for all features that influence healthiness. When a cluster performs as the best cluster in a feature, it gets a point. The cluster with the most wins will be considered as the most healthy one.
+
+Here, the data will be prepared.
+```{r, message=FALSE, warning=FALSE}
+normCereals <- preProcess(cereals, method = c("center", "scale")) # estimate the pre-processing transformation from cereals
+normCereals <- predict(normCereals, cereals) # standardize the data of the whole cereals data set
+
+distances <- dist(normCereals, method = "euclidean") # calculate the euclidean distance
+
+complete <- hclust(distances, method = "complete") # run a new hierarchical classification
+
+assignmentComplete <- as.factor(cutree(complete, k = 6)) # assign clusters to the brands
+
+cerealsClusters <- normCereals # assign the standardized values to cerealsClusters
+
+cerealsClusters$clusters <- assignmentComplete # assign the assignments to a new column in cerealsClusters
+centroidsComplete <- aggregate(. ~ clusters, data = cerealsClusters[,-c(1:2)], FUN = mean) # aggregate by the assigned clusters and take the mean for each feature
+
+centroidsComplete <- t(centroidsComplete) # transpose centroidsComplete
+
+colnames(centroidsComplete) <- c("Cluster1","Cluster2","Cluster3","Cluster4","Cluster5","Cluster6") # assign new column names
+
+# transposing centroidsComplete transformed the values to strings, they will now be reconverted into numeric
+centroidsComplete <- transform(centroidsComplete, Cluster1 = as.numeric(Cluster1))
+centroidsComplete <- transform(centroidsComplete, Cluster2 = as.numeric(Cluster2))
+centroidsComplete <- transform(centroidsComplete, Cluster3 = as.numeric(Cluster3))
+centroidsComplete <- transform(centroidsComplete, Cluster4 = as.numeric(Cluster4))
+centroidsComplete <- transform(centroidsComplete, Cluster5 = as.numeric(Cluster5))
+centroidsComplete <- transform(centroidsComplete, Cluster6 = as.numeric(Cluster6))
+```
+
+The actual calculation of healthiness will be executed as follows.
+```{r, message=FALSE, warning=FALSE}
+healthyClusters <- centroidsComplete[-c(1,6,7,11,13,14),] # exclude those classes which cannot be linked to either being healthy or unhealthy (cluster, fiber, carbo, shelf, cups, rating) unambiguously.
+
+# the for loop will invert the values of healthy features because finally the approach will look for the minimum of the averages for each feature for each cluster
+
+for (i in 1:6){ # go through all clusters
+  healthyClusters[2,i] <- abs(healthyClusters[2,i] - 1) # invert the values for protein
+  healthyClusters[7,i] <- abs(healthyClusters[7,i] - 1) # invert the values for potass
+  healthyClusters[8,i] <- abs(healthyClusters[8,i] - 1) # invert the values for vitamins
+}
+
+healthyClusters$winner <- names(healthyClusters)[apply(healthyClusters, MARGIN = 1, FUN = which.min)] # find the winning cluster for each feature
+
+plotHC <- data.table(healthyClusters)[, .N, by = winner] # sum up the wins of the clusters
+ggplot(plotHC, aes(x= reorder(winner, c(1,3,2,4)), fill = winner)) + # make a new ggplot with the reordered winning clusters
+  geom_bar(aes(y=N), stat = "identity") + # set stat to identity because the values already exist and don't have to be counted anymore
+  scale_fill_manual(values=c("#C0C0C0", "#a97142", "#C0C0C0", "#FFD700")) + # set the colors of the medals
+  labs(title = "Won features by cluster", y = "Won features", x = "Clusters") + # set the title and axis labels
+  theme(legend.title = element_blank()) # remove the legend title
+```
+\
+Cluster 6 performed best in most features (3). Clusters 1 and 5 are on the second place and cluster 4 on the third. All other clusters could not win a feature.\
+Following cereals have been assigned to cluster 6.
+```{r, message=FALSE, warning=FALSE}
+kable(data.table("names" = rownames(cereals), "assignment" = assignment)[assignment %in% 6,]) # show the cereals of cluster 6
+```
+Since there are only 2 cereals in that cluster and clusters 1 and 5 also won 2 features, these will also be listed as healthy options since it is considered healthy to have some change in the daily food.
+```{r, message=FALSE, warning=FALSE}
+kable(data.table("names" = rownames(cereals), "assignment" = assignment)[assignment %in% 1,]) # show the cereals of cluster 1
+kable(data.table("names" = rownames(cereals), "assignment" = assignment)[assignment %in% 5,]) # show the cereals of cluster 5
+```
+Cluster 5 is very large, so a lot variety will be found in it but as mentioned above, changing eating routine can also be considered as healthy.
+
+## References
+
+### Packages
+
+  Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data Structures, Summaries, and Visualisations for Missing Data_. R package version
+  0.6.1, <https://CRAN.R-project.org/package=naniar>.
+  
+  Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  Kuhn M (2022). _caret: Classification and Regression Training_. R package version 6.0-93, <https://CRAN.R-project.org/package=caret>.
+
+  Kassambara A, Mundt F (2020). _factoextra: Extract and Visualize the Results of Multivariate Data Analyses_. R package version 1.0.7,
+  <https://CRAN.R-project.org/package=factoextra>.
+
+  Bengtsson H (2022). _matrixStats: Functions that Apply to Rows and Columns of Matrices (and to Vectors)_. R package version 0.62.0,
+  <https://CRAN.R-project.org/package=matrixStats>.
+  
+  H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, 2016.
+  
+  Tal Galili (2015). dendextend: an R package for visualizing, adjusting, and comparing trees of hierarchical clustering. Bioinformatics.
+  DOI: 10.1093/bioinformatics/btv428
+
+  Yihui Xie (2022). knitr: A General-Purpose Package for Dynamic Report Generation in R. R package version 1.40.
+
+  Yihui Xie (2015) Dynamic Documents with R and knitr. 2nd edition. Chapman and Hall/CRC. ISBN 978-1498716963
+
+  Yihui Xie (2014) knitr: A Comprehensive Tool for Reproducible Research in R. In Victoria Stodden, Friedrich Leisch and Roger D. Peng,
+  editors, Implementing Reproducible Computational Research. Chapman and Hall/CRC. ISBN 978-1466561595
+
+
+
+
+
+
+
+
+

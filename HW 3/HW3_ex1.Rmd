@@ -1,0 +1,296 @@
+---
+title: "Task 6.4"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+Before the actual regression task, the data needs to be explored. 
+The following packages will be needed throughout the document.
+```{r, message=FALSE, warning=FALSE}
+library(naniar) # package for missing value analysis
+library(data.table) # package for handling data in a datatable
+library(caret) # package includes function RMSE
+library(Hmisc) # package includes function cut2
+library(forecast) # package for the function predict
+```
+
+The dataset is loaded first.
+```{r, message=FALSE, warning=FALSE}
+corolla <- fread("ToyotaCorolla.csv") # read the dataset into a datatable
+set.seed(1) # for reproducability
+```
+
+The actual exploration begins with the dimensions of the dataset.
+```{r, message=FALSE, warning=FALSE}
+dim(corolla) # gives the dimensions of corolla
+```
+This dataset has 1436 observation and 39 variables.
+
+It will be examined in what form the values of the single variables are.
+```{r, message=FALSE, warning=FALSE}
+str(corolla)
+```
+Except Fuel_Type and Color, all variables are in integer form. Several are categorical, like these two and doors. Approximately half of the variables are binary.
+
+The missing values-analysis will be made using gg_miss_var.
+```{r, message=FALSE, warning=FALSE}
+gg_miss_var(corolla)
+```
+\
+There are no missing values in this dataset.
+
+The prices will be considered to be EUR in the whole analysis.
+
+## Data preparation
+
+In order to conduct further analysis, here regression, a few variables first must be converted to dummy variables.\
+This applies to Fuel_Type and Doors.
+
+```{r, message=FALSE, warning=FALSE}
+# Dummy variables
+
+corolla$Fuel_Type_Diesel <- ifelse(corolla$Fuel_Type == 'Diesel', 1, 0) # if the fuel type is Diesel, set the value of this observation in the new dummy variable column of Diesel to 1, else to 0
+corolla$Fuel_Type_Petrol <- ifelse(corolla$Fuel_Type == 'Petrol', 1, 0) # same approach for petrol
+# CNG will not get a new dummy-variable column because it is a linear combination of the two newly created dummy variable columns
+corolla$Doors2 <- ifelse(corolla$Doors == 2, 1, 0) # same approach
+corolla$Doors3 <- ifelse(corolla$Doors == 3, 1, 0) # same approach
+corolla$Doors4 <- ifelse(corolla$Doors == 4, 1, 0) # same approach
+```
+
+The next step is to partition the data into training, validation and test sets (50:30:20).
+
+```{r, message=FALSE, warning=FALSE}
+# Splitting
+
+trainingIndex = sample(seq_len(nrow(corolla)), size = 0.5*nrow(corolla)) # trainingIndex gets 60% of the indices of the initial dataset
+training = corolla[trainingIndex,] # the corresponding data to trainingindex are loaded into training
+rest = corolla[-trainingIndex,] # the rest of the data is assigned to rest
+
+validationIndex = sample(seq_len(nrow(rest)), size = 0.6*nrow(rest)) # 60% of the rest indices are assigned to calidationIndex
+validation = corolla[validationIndex,] # the values of these 60% are assigned to validation
+test = corolla[-validationIndex,] # the values that have not been assigned to validation are assigned to test
+```
+
+According to the task, only selected variables shall be used to execute further analyses. This will be done in the following.
+
+```{r, message=FALSE, warning=FALSE}
+variables <- c("Price", "Age_08_04", "KM", "Fuel_Type_Diesel", "Fuel_Type_Petrol", "HP", "Automatic", "Doors2", "Doors3", "Doors4", "Quarterly_Tax", "Mfr_Guarantee", "Guarantee_Period", "Airco", "Automatic_airco", "CD_Player", "Powered_Windows", "Sport_Model", "Tow_Bar") # setting the variables on which the regression shall be executed
+training = training[, ..variables] # reducing the initial dataset to these variables
+```
+
+## Linear Model
+
+A multiple linear regression model will be created as follows.
+```{r, message=FALSE, warning=FALSE}
+corollaModel <- lm(Price ~ ., data = training) # run a multiple linear model to predict price based on all other variables of training
+options(scipen = 999) # turn off scientific notation
+summary(corollaModel) # output the summary of the linear model
+```
+Obviously, there are several variables that appear highly significant. Also one can see that the multiple R-squared and the adjusted R-squared, both are approximately 89%.
+
+This model will now be used to predict the prices of the validation set.
+
+```{r, message=FALSE, warning=FALSE}
+predictPrices <- predict(corollaModel, validation) # predict prices of the validation set
+accuracy(predictPrices, validation$Price) # calculate the accuracy of the predictions, comparing them to the true prices
+```
+
+The RMSE is 1420.
+
+## a)
+
+### What appear to be the three or four most important car specifications for predicting the car's price?
+
+A simple approach would be to take the features with the smallest p-values of the summary in the previous page. This would be Age, KM, HP and automatic air-condition.
+
+In the second approach, the varImp function from the caret package will be used.
+```{r, message=FALSE, warning=FALSE}
+importance <- varImp(corollaModel, scale = FALSE) # getting the variable importance using varImp
+importance$Overall <- sort(importance$Overall, decreasing = TRUE) # sort the importance of the variables
+importance # output the importance
+```
+One can see that the age, mileage and fuel type are the most important variables according to this method.
+
+Another approach is to use forward and backward selection. This will be carried out in the following. 
+```{r, message=FALSE, warning=FALSE}
+forwModel <- train(Price ~ ., data = training, # train the model to predict Price on all the other variables from training
+                   method = "leapForward", # Forward selection
+                   tuneGrid = data.frame(nvmax = 3:4), # number of predictors is 3-4
+                   trControl = trainControl(method = "cv", number = 10)) # set how train will compute, cv splits the data into number (10) folds
+
+# same approach but with leapBackward instead of leapForward
+backwModel <- train(Price ~ ., data = training,
+                   method = "leapBackward",
+                   tuneGrid = data.frame(nvmax = 3:4),
+                   trControl = trainControl(method = "cv", number = 10))
+
+# return the 4 predictors from both approaches for the forward model
+coef(forwModel$finalModel, 4)
+# return the 4 predictors from both approaches for the backward model
+coef(backwModel$finalModel, 4)
+```
+
+The result from above does not go in line with the findings from the forward and backward selection. Both selection methods deliver age, HP, quarterly tax and automatic aircondition as the four most important variables.
+
+In the following, 2 models with the previously suggested most important variables will be created and compared according to their RMSE when predicting prices in the validation set.
+```{r, message=FALSE, warning=FALSE}
+# calculate the models with the 4 variables that were obtained from the two different methods above
+
+corollaModelpValue <- lm(Price ~ Age_08_04 + KM + HP + Automatic_airco, data = training) # for the varImp function
+
+
+corollaModelVarImp <- lm(Price ~ Age_08_04 + KM + Fuel_Type_Diesel + Fuel_Type_Petrol, data = training) # for the varImp function
+
+corollaModelForwBackw <- lm(Price ~ Age_08_04 + HP + Quarterly_Tax + Automatic_airco, data = training) # for the forward/backward selection
+
+predictPricespValue <- predict(corollaModelpValue, validation) # do the prediction for model with the variables from the selection methods
+
+predictPricesVarImp <- predict(corollaModelVarImp, validation) # do the prediction for model with the variables from the varImp method
+
+predictPricesForwBackw <- predict(corollaModelForwBackw, validation) # do the prediction for model with the variables from the selection methods
+
+# calculating the RMSE for the approaches
+RMSE(predictPricespValue, validation$Price)
+RMSE(predictPricesVarImp, validation$Price)
+RMSE(predictPricesForwBackw, validation$Price)
+```
+
+The selection model performs best in terms of RMSE and will therefore be taken as the comparison to the big model for b). 
+
+## b)
+
+### Using metrics you consider useful, assess the performance of the model in predicting prices.
+
+This task will be done graphically and using metrics. Also, the performance of the model with all variables will be compared to the performance of the selection model with only 4 variables.
+
+### {.tabset}
+
+#### Graphically
+
+At first, both models' performances will be assessed in two boxplots.
+
+The data will organised in a datatable, first.
+
+```{r, message=FALSE, warning=FALSE}
+# organising
+
+accuracyb <- data.table("TruePrice" = validation$Price, "PredictionAllVar" = predictPrices, "PredictionSelectionMeth" = predictPricesForwBackw) # new data.table with the most relevant rows of validation and the predicted prices
+
+accuracyb$DistAll <- accuracyb$TruePrice - accuracyb$PredictionAllVar # set a new column with the difference between price and the predictions of the big model
+
+accuracyb$DistSelection <- accuracyb$TruePrice - accuracyb$PredictionSelectionMeth # set a new column with the difference between price and the predictions of the model with the selection methods
+```
+
+Here, the boxplots are created.
+```{r, message=FALSE, warning=FALSE}
+# boxplots
+
+# plot this distance as a barplot
+allPlot <- ggplot(accuracyb, aes(y=DistAll)) + 
+  geom_boxplot() +
+  labs(title = "Prediction errors big model") + # set the title
+  theme(axis.title.x = element_blank(), # empty x-axis
+       axis.text.x = element_blank(),
+       axis.ticks.x = element_blank())
+
+selectionPlot <- ggplot(accuracyb, aes(y=DistSelection)) + 
+  geom_boxplot() +
+  labs(title = "Prediction errors selection model") + # set the title
+  theme(axis.title.x = element_blank(), # empty x-axis
+         axis.text.x = element_blank(),
+         axis.ticks.x = element_blank())
+require(gridExtra) # needed for combining two ggplots
+grid.arrange(allPlot, selectionPlot, ncol=2) # combine both ggplots that were created above
+
+# calculate the mean and median of the errors
+median(accuracyb$DistAll)
+mean(accuracyb$DistAll)
+median(accuracyb$DistSelection)
+mean(accuracyb$DistSelection)
+```
+
+Both boxplots look nearly identical but since the pot of the selection model has a bigger y-scale, the errors are more distracted and further away from 0 than in the big model.\
+Both boxplots have a median and mean slightly below 0, the selection model a bit stronger. Since error terms should have an expectation of 0, one can conclude that the model is flawed, here, but not seriously since there is the values are close to 0.
+
+```{r, message=FALSE, warning=FALSE}
+cor(abs(accuracyb$DistAll), accuracyb$TruePrice) # calculate correlation between the error of the big model and the true price to learn if the absolute error increases with price
+cor(abs(accuracyb$DistSelection), accuracyb$TruePrice) # calculate correlation between the error of the selection model and the true price to learn if the absolute error increases with price
+```
+The absolute value of the error terms for both models is not strongly correlated with the absolute price, so one cannot state that the error are getting larger with a rising price.
+
+In the following, the errors will be categorised in groups of magnitudes of the specific errors. Then, the categorised data will be shown in a line graph in order to learn about the distribution of error magnitudes of the two models.
+```{r, message=FALSE, warning=FALSE}
+
+# separate the errors of the two models into categories, each consisting of an interval of 500
+accuracyb$DistGroupsAll <- cut2(accuracyb$DistAll, cuts = c(-2000, -1500, -1000, -500, 0, 500, 1000, 1500, 2000))
+accuracyb$DistGroupsSelection <- cut2(accuracyb$DistSelection, cuts = c(-2000, -1500, -1000, -500, 0, 500, 1000, 1500, 2000))
+
+# count the errors for each category for both models
+# create a new datatable for that
+errorPlotTable <- data.table((accuracyb[, .N, by = DistGroupsAll])[order(rank(DistGroupsAll), N)]) # for the big model
+errorPlotTable$NSelection <- data.table((accuracyb[, .N, by = DistGroupsSelection])[order(rank(DistGroupsSelection), N)])$N # for the selection model
+
+ggplot(errorPlotTable, aes(DistGroupsAll, group = 1)) + # new ggplot with the data of errorPlotTable
+  geom_path(aes(y=N), colour = "green") + # add a line for the big model
+  geom_path(aes(y=NSelection, colour = "black")) + # add a line for the selection model
+  scale_color_manual("",
+                     values = c("Big model" = "green", "Selection model" = "black")) + # set colours
+  labs(title = "Number of errors for the two models", y = "Number", x = "Error Groups") + # set title and axis descriptions
+  theme(axis.text.x=element_text(angle=45, hjust=1)) # rotate the x-axis labels
+```
+\
+The big model has visibly higher numbers of predictions in the area of smaller errors. The larger the distance to the true price (the bigger the error), the more observations can be seen from the selection model. This goes in line with the finding, that the selection model has a higher RMSE than the big model.
+
+#### Metrics
+
+In the next section, it will be examined how well the two models will perform, considering different statistical metrics.
+
+
+```{r, message=FALSE, warning=FALSE}
+accuracy(predictPrices, validation$Price) # calculate the accuracy
+accuracy(predictPricesForwBackw, validation$Price) # calculate the accuracy
+```
+
+The mean error of the big model is closer to 0 than the one of the small model, but both are slightly negative. The RMSE is with 1420 about 200 smaller than for the small model. The same applies for he mean absolute error, which is 1053 for the big model. According to MPE, the predictions of the big model were 3.11% below the true value. For the small model, it were 4.96%. The Mean Absolute Percentage Error is for the big model 9.02% and for the small model 10.66%.
+
+#### Conclusion
+After these analyses, it seems that the big model outperforms the smaller one. This is counter-intuitive because it was to expect that including so many variables would lead to over-fitting and that a small model should solve this problem. Cutting out so many variables obviously led to not only cancelling out over-fitting but also explanatory power.
+
+## References
+
+### Packages
+
+  Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data
+  Structures, Summaries, and Visualisations for Missing Data_. R
+  package version 0.6.1,
+  <https://CRAN.R-project.org/package=naniar>.
+  
+  Dowle M, Srinivasan A (2021). _data.table: Extension of
+  `data.frame`_. R package version 1.14.2,
+  <https://CRAN.R-project.org/package=data.table>.
+  
+  Kuhn M (2022). _caret: Classification and Regression Training_.
+  R package version 6.0-93,
+  <https://CRAN.R-project.org/package=caret>.
+  
+  Harrell Jr F (2022). _Hmisc: Harrell Miscellaneous_. R package
+  version 4.7-1, <https://CRAN.R-project.org/package=Hmisc>.
+  
+  Hyndman R, Athanasopoulos G, Bergmeir C, Caceres G, Chhay L,
+  O'Hara-Wild M, Petropoulos F, Razbash S, Wang E, Yasmeen F
+  (2022). _forecast: Forecasting functions for time series and
+  linear models_. R package version 8.18,
+  <https://pkg.robjhyndman.com/forecast/>.
+
+  Hyndman RJ, Khandakar Y (2008). “Automatic time series
+  forecasting: the forecast package for R.” _Journal of
+  Statistical Software_, *26*(3), 1-22. doi:10.18637/jss.v027.i03
+  <https://doi.org/10.18637/jss.v027.i03>.

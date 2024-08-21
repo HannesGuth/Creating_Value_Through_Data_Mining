@@ -1,0 +1,370 @@
+---
+title: "Task 11.3"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data preparation
+
+### The aim of this task is to run a neural network on the ToyotaCorolla dataset and to predict the price of cars.
+
+The following packages will be needed throughout the document.
+```{r, message=FALSE, warning=FALSE}
+library(data.table) # package for handling data in a data table
+library(neuralnet) # package to run neural networks
+library(caret) # package for several function, in this case necessary for RMSE-function
+library(ggplot2) # package for plots
+library(plotly) # package for interactivity
+```
+
+The first step is to load the respective dataset.
+```{r, message=FALSE, warning=FALSE}
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining/Homework 3") # set working directory
+corolla <- fread("ToyotaCorolla.csv") # read the data as a datatable
+set.seed(1) # set seed to 1 for reproducability
+```
+
+In order to deal with categorical variables, Fuel_type and Doors will be made dummy variables.
+```{r, message=FALSE, warning=FALSE}
+corolla$Fuel_Type_Diesel <- ifelse(corolla$Fuel_Type == 'Diesel', 1, 0) # make Diesel a Dummy-variable: When "Diesel" is found, create set the value to 1 in the new dummy variable column "Fuel_Type_Diesel"
+corolla$Fuel_Type_Petrol <- ifelse(corolla$Fuel_Type == 'Petrol', 1, 0) # same approach as above
+# do not create an extra column for CNG because it is a linear combination of the two other fuel types
+
+# same approach for variable "Doors"
+corolla$Doors2 <- ifelse(corolla$Doors == 2, 1, 0)
+corolla$Doors3 <- ifelse(corolla$Doors == 3, 1, 0)
+corolla$Doors4 <- ifelse(corolla$Doors == 4, 1, 0)
+```
+
+To calculate the RMSE of the price prediction later on, the maximum and minimum price need to be taken before the data are normalised on a scale from 0 to 1.
+```{r, message=FALSE, warning=FALSE}
+# set maximum and minimum values for price since they will be needed later on to scale it back
+minimum <- min(corolla[,3])
+maximum <- max(corolla[,3])
+```
+
+Because for neural networks all data need to be normalised, the following function will be introduced for that. It takes a dataframe and returns a dataframe but with normalised values.
+```{r, message=FALSE, warning=FALSE}
+# define a function to scale the data
+scale <- function(array){ # the variable gets as input the variable array, for later use it will be a dataframe
+  for (j in 1:length(array)){ # go through every column
+    len = length(array[,j]) # set len to the length of that column
+    min = min(array[,j]) # set min to the minimal value of that column
+    max = max(array[,j]) # set max to the maximum value of that column
+    if (is.numeric(array[2,j])){ # only scale columns that have numeric values
+      for (i in 1:len){ # go through every row of that column
+        array[i,j] <- (array[i,j]-min)/(max-min) # apply the formula Xnorm = (X-a)/(b-a) to scale values from that column and replace the old value with the new scaled value
+      }
+    }
+  }
+  return(data.frame(array)) # return the scaled dataframe
+}
+```
+
+The function is applied as follows.
+```{r, message=FALSE, warning=FALSE}
+# scale the data
+corolla <- as.data.frame(corolla) # make the data a dataframe
+corolla <- scale(corolla) # apply the function from above
+```
+
+According to the task, only selected variables shall be considered. The dataset will be reduced to these variables.
+```{r, message=FALSE, warning=FALSE}
+variables <- c("Price", "Age_08_04", "KM", "Fuel_Type_Diesel", "Fuel_Type_Petrol", "HP", "Automatic", "Doors2", "Doors3", "Doors4", "Quarterly_Tax", "Mfr_Guarantee", "Guarantee_Period", "Airco", "Automatic_airco", "CD_Player", "Powered_Windows", "Sport_Model", "Tow_Bar") # set the variables that are selected for the neural network
+corolla <- corolla[,variables] # reduce the dataset to the above defined variables
+```
+
+Finally, the dataset will be split into a training and validation sets 60:40.
+```{r, message=FALSE, warning=FALSE}
+# sample the data
+trainingIndex = sample(seq_len(nrow(corolla)), size = 0.6*nrow(corolla)) # 60 percent of the indices of the data are assigned to trainingIndex
+training = corolla[trainingIndex,] # the to the indices of trainingIndex corresponding data are assigned to training
+validation = corolla[-trainingIndex,] # the values that have not been selected before, are assigned to validation
+```
+
+## Neural networks and prediction
+
+The task first asks to run a neural network with a single hidden layer and 2 nodes. This will be denoted as "netz1". The both other nets demanded by the task will also be created in the next section denoted as "netz2" and "netz3".
+```{r, message=FALSE, warning=FALSE}
+# run 3 neural net versions
+# train model to predict price with the selected variables from above
+
+# one hidden layer with 2 nodes
+netz1 <- neuralnet(Price ~ Age_08_04 + KM + Fuel_Type_Diesel + Fuel_Type_Petrol + HP + Automatic + Doors2 + Doors3 + Doors4 + Quarterly_Tax + Mfr_Guarantee + Guarantee_Period + Airco + Automatic_airco + CD_Player + Powered_Windows + Sport_Model + Tow_Bar, data = training, hidden = c(2,1)) # run a neural network to predict the price based on the listed variables, using as data "training" and set one hidden layer with 2 nodes
+
+# one hidden layer with 5 nodes
+netz2 <- neuralnet(Price ~ Age_08_04 + KM + Fuel_Type_Diesel + Fuel_Type_Petrol + HP + Automatic + Doors2 + Doors3 + Doors4 + Quarterly_Tax + Mfr_Guarantee + Guarantee_Period + Airco + Automatic_airco + CD_Player + Powered_Windows + Sport_Model + Tow_Bar, data = training, hidden = c(5,1)) # same approach
+
+# two hidden layers with 5 nodes each
+netz3 <- neuralnet(Price ~ Age_08_04 + KM + Fuel_Type_Diesel + Fuel_Type_Petrol + HP + Automatic + Doors2 + Doors3 + Doors4 + Quarterly_Tax + Mfr_Guarantee + Guarantee_Period + Airco + Automatic_airco + CD_Player + Powered_Windows + Sport_Model + Tow_Bar, data = training, hidden = c(5,2)) # same approach
+```
+
+## Graphical presentation of the networks
+
+```{r, message=FALSE, warning=FALSE}
+plot(netz1, rep = "best")
+plot(netz2, rep = "best")
+plot(netz3, rep = "best")
+```
+
+## i), ii), iii) {.tabset}
+
+### General approach
+
+#### i) What happens to the RMS error for the training data as the number of layers and nodes increases?
+
+#### ii) What happens to the RMS error for the validation data?
+
+The task seems to ask for a intuition regarding the RMS error, based on the 3 networks that were calculated before. To get a better impression how the relationship develops with a rising number of nodes and layers, the following approach incorporates 100 different combinations of nodes and layers including the already calculated ones. For reasons of simplicity and computational time, these 100 networks will have 1 to 10 layers and each layer in one network will have the same amount of nodes. It is clear that this is far from incorporating every combination of node number per layer for each network but the addressed scope should be sufficient to learn more accurate about the general trend than just analysing 3 different networks.\
+
+The RMS errors of the addressed networks will be analysed and presented graphically in this tab.
+The next tab will focus on the 3 networks that were explicitly demanded by the task.
+
+As a first step, the 100 different networks must be created and their RMS error must be taken.
+For this, 100 combinations of number of nodes and layers are derived, where both sizes can at maximum be 10.
+```{r, message=FALSE, warning=FALSE}
+combinations <- expand.grid(1:10, 1:10) # create all combinations of 10 numbers on two spots (nodes and layers)
+head(combinations) # show the first entries of combinations
+```
+
+The next part then calculates the RMS error of the 100 networks for both, the training and the validation set, and saves them with their respective values for nodes and layers.
+
+```{r, message=FALSE, warning=FALSE}
+#la <- nrow(combinations) # get the number of combinations
+#performance <- data.table("Nodes" = numeric(la), "Layers" = numeric(la), "RMSETraining" = #numeric(la), "RMSEValidation" = numeric(la)) # create an empty datatable to store the results
+
+#for (i in 1:la){ # go through all combinations
+#  set.seed(1) # reprocability
+#  current <- neuralnet(Price ~ Age_08_04 + KM + Fuel_Type_Diesel + Fuel_Type_Petrol + HP + #Automatic + Doors2 + Doors3 + Doors4 + Quarterly_Tax + Mfr_Guarantee + Guarantee_Period + Airco + #Automatic_airco + CD_Player + Powered_Windows + Sport_Model + Tow_Bar, data = training, hidden = #c(combinations[i,1],combinations[i,2])) # calculate the neural network for the current combination of nodes and layers
+#  set.seed(1) # reproducability
+  
+#  performance[i,1] <- combinations[i,1] # save the number of nodes
+#  performance[i,2] <- combinations[i,2] # save the number of layers
+#  performance[i,3] = RMSE((compute(current, training)$net.result[,1])*(maximum-minimum)+minimum, (training$Price)*(maximum-minimum)+minimum) # re-normalise the predictions and true prices and then calculate the RMS error for the training set
+#  performance[i,4] = RMSE((compute(current, #validation)$net.result[,1])*(maximum-minimum)+minimum, #(validation$Price)*(maximum-minimum)+minimum) # # re-normalise the predictions and true prices and then calculate the RMS error for the validation set
+#}
+```
+
+```{r, message=FALSE, warning=FALSE}
+la = 100 # set the length for the array to store the results
+performance <- data.table("Layers" = numeric(la), "Nodes" = numeric(la), "RMSETraining" = numeric(la), "RMSEValidation" = numeric(la)) # create the array
+
+for (j in 1:10){ # go through 10 layers
+  for (i in 1:10){ # go through 10 nodes
+    performance[(j-1)*10+i,1] = j # save the number of layers
+    performance[(j-1)*10+i,2] = i # save the number of nodes
+    if (j == 1){ # if the number of layers = 1
+      set.seed(1) # reprocability
+      current <- neuralnet(Price ~ ., data = training, hidden = i) # calculate the neural network for the current combination of nodes per layer and 1 hidden layer
+      }
+    if(j == 2){
+        set.seed(1) # reproducability
+        current <- neuralnet(Price ~ ., data = training, hidden = c(i,i)) # calculate the neural network for the current combination of nodes per layer and 2 hidden layers
+      }
+    if(j == 3){
+        set.seed(1) # reproducability
+        current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i)) # calculate the neural network for the current combination of nodes per layer and 3 hidden layers
+      }
+    if(j == 4){
+        set.seed(1) # reproducability
+        current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 4 hidden layers
+      }
+    if(j == 5){
+        set.seed(1) # reproducability
+        current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 5 hidden layers
+      }
+    if(j == 6){
+      set.seed(1) # reproducability
+      current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 6 hidden layers
+      }
+    if(j == 7){
+      set.seed(1) # reproducability
+      current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 7 hidden layers
+      }
+    if(j == 8){
+      set.seed(1) # reproducability
+      current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i,i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 8 hidden layers
+      }
+    if(j == 9){
+      set.seed(1) # reproducability
+      current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i,i,i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 9 hidden layers
+        }
+    if(j == 10){
+      set.seed(1) # reproducability
+      current <- neuralnet(Price ~ ., data = training, hidden = c(i,i,i,i,i,i,i,i,i,i)) # calculate the neural network for the current combination of nodes per layer and 10 hidden layers
+    }
+    performance[(j-1)*10+i,3] <- RMSE((compute(current, training)$net.result[,1])*(maximum-minimum)+minimum, (training$Price)*(maximum-minimum)+minimum) # un-normalise the true price and the predicted price of the current for the training set network and calculate the RMS error from it
+    performance[(j-1)*10+i,4] <- RMSE((compute(current, validation)$net.result[,1])*(maximum-minimum)+minimum, (validation$Price)*(maximum-minimum)+minimum) # un-normalise the true price and the predicted price of the current for the validation set network and calculate the RMS error from it
+  }
+}
+```
+
+The performance table looks as follows, now.
+```{r, message=FALSE, warning=FALSE}
+head(performance, 22)
+```
+
+Since the task asks for the effect on the RMS error when both, nodes and layers increase, this first attempt shows what happens for the RMS error in the training and validation set when the sum of both sizes increases.
+
+```{r, message=FALSE, warning=FALSE}
+performance$sum <- performance$Nodes + performance$Layers # calculate the sum of the nodes and layers for each combination
+
+# plot the RMS errors for a rising sum of nodes and layers
+ggplotly(
+  ggplot(data = performance, aes(sum, group = 1)) + # create a new ggplot
+    geom_point(aes(y = RMSEValidation, colour = "Validation")) + # plot the RMS errors for the validation set
+    geom_smooth(aes(y = RMSEValidation, colour = "Validation")) + # add the trend line 
+    geom_point(aes(y = RMSETraining, colour = "Training")) + # plot the RMS errors for the training set
+    geom_smooth(aes(y = RMSETraining, colour = "Training")) + # add the trend line
+    scale_x_continuous(breaks=c(1:max(performance$sum))) + # label the x-axis according to the maximum sum
+    scale_color_manual(values=c("Validation" = "yellow", "Training" = "red")) + # set the colours
+      geom_label(label="netz1", x = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,5]), y = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,3])) + # label the RMS error for netz1 for the training set
+      geom_label(label="netz3", x = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,5]), y = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,3])) + # label the RMS error for netz3 for the training set
+    geom_label(label="netz2", x = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,5]), y = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,3])) + # label the RMS error for netz2 for the training set
+      geom_label(label="netz1", x = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,5]), y = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,4])) + # label the RMS error for netz1 for the validation set
+      geom_label(label="netz3", x = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,5]), y = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,4])) + # label the RMS error for netz3 for the validation set
+    geom_label(label="netz2", x = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,5]), y = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,4])) + # label the RMS error for netz2 for the validation set
+    labs(title = "Performance for training and validation with rising sum of layers and nodes", y = "RMS error", x = "Sum of layers and nodes") + # add title and axis labels
+    theme(legend.title=element_blank()) + # remove legend title
+    ylim(500,1500) # set y-axis limits
+)
+```
+\
+One can observe that for the validation data, the RMS error rises slightly but not linear with a rising sum of nodes and layers. For the training set, there is a negative trend, this means the higher the sum of nodes and layers, the smaller the RMS error but this trend seems to have a lower limit. As could have been anticipated, the nets from the task (netz1, netz2, netz3) for both, the training and validation set, are found on the left part of the diagramme because the sum of nodes and layers is at maximum 7. Only for the sum of 2, the validation set has a smaller RMS error than the training set.
+
+In the next 2 steps, the relationship will be limited to only one variable, either nodes or layers, beginning with nodes.
+
+```{r, message=FALSE, warning=FALSE}
+# plot the RMS errors for a rising number of nodes
+ggplotly(
+  ggplot(data = performance, aes(Nodes, group = 1)) + # create a new ggplot
+    geom_point(aes(y = RMSETraining, colour = "Training")) + # add the RMS errors for training
+    geom_smooth(aes(y = RMSETraining, colour = "Training")) + # add the trend line for training
+    geom_point(aes(y = RMSEValidation, colour = "Validation")) + # add the RMS errors for validation
+    geom_smooth(aes(y = RMSEValidation, colour = "Validation")) + # add the trend line for validation
+    scale_x_continuous(breaks=c(1:11)) + # set the x axis ticks to the correct number of integers
+    scale_color_manual(values=c("Validation" = "yellow", "Training" = "red")) + # set the colours
+    geom_label(label="netz1", x = 2, y = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,3])) + # add the label for netz1 for the training set
+    geom_label(label="netz2", x = 5, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,3])) + # add the label for netz2 for the training set
+    geom_label(label="netz3", x = 5, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,3])) + # add the label for netz3 for the training set
+      geom_label(label="netz1", x = 2, y = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,4])) + # add the label for netz1 for the validation set
+    geom_label(label="netz2", x = 5, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,4])) + # add the label for netz2 for the validation set
+    geom_label(label="netz3", x = 5, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,4])) + # add the label for netz3 for the validation set
+    labs(title = "Performance for training and validation with rising number of nodes ", y = "RMSE", x = "Number of nodes") + # add title and axis labels
+    theme(legend.title=element_blank()) + # remove the legend title
+  ylim(500,1500) # set y-axis limits
+)
+```
+\
+Again, the RMS error rises with an increasing number of nodes for the validation set and the training RMS error seems to fall constantly where the lower bound, if there is any, has not been reached with a maximum of 10 nodes. 
+
+The same diagramme will be produced for a rising number of layers.
+```{r, message=FALSE, warning=FALSE}
+
+# same approach as for the plot above but now with the number of layers instead of nodes
+ggplotly(
+  ggplot(data = performance, aes(Layers, group = 1)) +
+    geom_point(aes(y = RMSETraining, colour = "Training")) +
+    geom_smooth(aes(y = RMSETraining, colour = "Training")) +
+    geom_point(aes(y = RMSEValidation, colour = "Validation")) +
+    geom_smooth(aes(y = RMSEValidation, colour = "Validation")) +
+    scale_x_continuous(breaks=c(1:11)) +
+    scale_color_manual(values=c("Validation" = "yellow", "Training" = "red")) +
+    geom_label(label="netz1", x = 2, y = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,3])) +
+    geom_label(label="netz2", x = 5, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,3])) +
+    geom_label(label="netz3", x = 2, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,3])) +
+      geom_label(label="netz1", x = 2, y = as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,4])) +
+    geom_label(label="netz2", x = 5, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,4])) +
+    geom_label(label="netz3", x = 2, y = as.numeric(performance[Nodes %in% 5 & Layers %in% 2, ][1,4])) +
+    labs(title = "Performance for training and validation with rising number of layers ", y = "RMSE", x = "Number of layers") +
+    theme(legend.title=element_blank()) +
+    ylim(500,1500)
+)
+```
+
+The number of layers does not seem to have an influence on the RMS error, neither for the training nor the validation data. The error for the validation data is at a level of approx. 1200 constantly about 200 higher than for the training data.
+
+### Inference for netz1, netz2, netz3
+
+#### Examination of the 3 networks mentioned in the task
+
+As the task asks specifically for 3 specification of nets, these will be approached here separately.
+
+The first step is to extract the desired data to a new datatable.
+```{r, message=FALSE, warning=FALSE}
+overview <- data.table("Network" = c("netz1", "netz2", "netz3"),
+                       "RMSEValidation" = c(
+                         as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,4]),
+                         as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,4]),
+                         as.numeric(performance[Nodes %in% 2 & Layers %in% 2, ][1,4])),
+                       "RMSETraining" = c(
+                         as.numeric(performance[Nodes %in% 2 & Layers %in% 1, ][1,3]),
+                         as.numeric(performance[Nodes %in% 5 & Layers %in% 1, ][1,3]),
+                         as.numeric(performance[Nodes %in% 2 & Layers %in% 2, ][1,3]))) # create a new datatable by extracting the RMS errors from the performance datatable for the training and validation sets of the 3 networks from the task
+```
+
+In the following, the RMS error for the three nets is plotted.
+```{r, message=FALSE, warning=FALSE}
+# plot the RMS errors using ggplot
+ggplotly(
+  ggplot(overview, aes(Network, group = 1)) + # data are from the datatable overview
+    geom_line(aes(y=RMSEValidation, colour = "Validation"), size = 1.5) + # add a line for validation
+    geom_line(aes(y=RMSETraining, colour = "Training"), size = 1.5) + # add a line for training
+    scale_colour_manual(values = c("Validation" = "yellow", "Training" = "red")
+                        ) + # set colours
+    ylim(500, 1500) + # set y-axis limits
+    labs(title = "RMSE for training and validation", x = "", y = "RMSE") + # add title and axis labels
+    theme(legend.title=element_blank()) # remove the legend title
+)
+```
+
+It is very tough to deduct unambiguous conclusions from this graph because it is not possible to see a distinct trend, neither for the training nor the validation set.
+
+### iii)
+
+#### Comment on the appropriate number of layers and nodes for this application.
+
+For this task, the performance datatable is ordered by the RMS error of the validation set.
+
+```{r, message=FALSE, warning=FALSE}
+orderedPerformance <- setorder(performance, cols = "RMSEValidation") # reordering ascending for the RMS error of the validation set
+head(orderedPerformance, 10) # show the first 10 rows
+```
+
+Looking at the RMS error for validation, it seems preferably to select 9 layers with 3 nodes each, at least from the of combination that was created before. The RMSE of the validation set is 1053.784 for this combination. This is only slightly better than the far less sophisticated nets following on the rank 2 to 5, where all have up to 5 layers but maximum 1 node each. The deliver RMS errors with maximum 1056.444. So these nets are much less complex but deliver nearly the same RMS error, so they are to take preferably. On rank 2, the net with 2 layers and one each is the simplest one in this group and delivers the smallest RMS error of 1054.742. This net is to prefer.
+
+The 3 networks from the task are ranked according the RMS error as follows.
+```{r, message=FALSE, warning=FALSE}
+head(setorder(overview, cols = "RMSEValidation")) # show the reordered overview datatable
+```
+netz1 with 1 hidden layer and 2 nodes delivers the smallest RMS error for the validation data and is therefore the preferable one of these 3 networks.
+
+## References
+
+#### Packages
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R package
+  version 1.14.2, <https://CRAN.R-project.org/package=data.table>.
+  
+  Fritsch S, Guenther F, Wright M (2019). _neuralnet: Training of Neural Networks_. R
+  package version 1.44.2, <https://CRAN.R-project.org/package=neuralnet>.
+  
+  Kuhn M (2022). _caret: Classification and Regression Training_. R package version
+  6.0-93, <https://CRAN.R-project.org/package=caret>.
+  
+  H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York,
+  2016.
+  
+  C. Sievert. Interactive Web-Based Data Visualization with R, plotly, and shiny. Chapman
+  and Hall/CRC Florida, 2020.
+
+
+
+  

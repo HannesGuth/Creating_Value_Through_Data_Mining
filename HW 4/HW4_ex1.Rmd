@@ -1,0 +1,221 @@
+---
+title: "Task 13.1"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+
+These packages will be needed throughout the document.
+```{r, message=FALSE, warning=FALSE}
+library(naniar) # for missing values analysis
+library(data.table) # for handling data tables
+library(class) # for knn function
+library(rpart) # for the classification tree
+library(caret) # for different functions, e.g. preProcess
+library(knitr) # for table outputs
+```
+
+```{r, message=FALSE, warning=FALSE}
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining/Homework 4/13.1") # set working directory
+bank <- fread("UniversalBank.csv") # read the data set
+set.seed(1) # reproducability
+```
+
+At first, the dimensions of the datatable will be explored.
+```{r, message=FALSE, warning=FALSE}
+dim(bank) # show the dimensions of the datatable
+```
+The data table consists of 5,000 observations and 14 variables
+
+Finally, the missing values are examined.
+```{r, message=FALSE, warning=FALSE}
+gg_miss_var(bank) # show where variables are missing
+```
+\
+There are no missing values in this dataset.
+
+Now, the features are looked at more in details.
+```{r, message=FALSE, warning=FALSE}
+str(bank) # show the feature names, their type and the first values
+```
+All features are numeric/integers. The last 5 are binary.
+
+They have the following distribution.
+```{r, message=FALSE, warning=FALSE}
+par(mfrow=c(3,4)) # set the number columns and rows
+
+# plot the histograms for all variables except ID and ZIP Code
+hist(bank$Age, main = "Age", xlab = "Age")
+hist(bank$Experience, main = "Experience", xlab = "Experience")
+hist(bank$Income, main = "Income", xlab = "Income")
+hist(bank$Family, main = "Family", xlab = "Family")
+hist(bank$CCAvg, main = "CCAvg", xlab = "CCAvg")
+hist(bank$Education, main = "Education", xlab = "Education")
+hist(bank$Mortgage, main = "Mortgage", xlab = "Mortgage")
+hist(bank$`Personal Loan`, main = "Personal Loan", xlab = "Personal Loan")
+hist(bank$`Securities Account`, main = "Securities Account", xlab = "Securities Account")
+hist(bank$`CD Account`, main = "CD Account", xlab = "CD Account")
+hist(bank$`Online`, main = "Online", xlab = "Online")
+hist(bank$`CreditCard`, main = "Credit Card", xlab = "Credit Card")
+```
+\
+One can see that Age and Experience have a very similar distribution. Income has a peak at around USD 30 (Thousand). Family and Education are both in integer form but not binary. CCAvg has a falling distribution with its maximum value at CCAvg = 0. A very similar distribution can be seen at Mortgage. Personal Loan, Securities Account, CD Account, Online and Credit Card are binary, where the first 3 have distinct more 0s than 1s and the last two have a ratio of about 1:2.
+
+## Data preparation
+
+As first step of data preparation, the dataset has to split into training and validation sets (60:40).
+```{r, message=FALSE, warning=FALSE}
+bank <- data.frame(bank[,-5]) # exclude ZIP Code
+trainingIndex <- sample(c(TRUE, FALSE), nrow(bank), replace=TRUE, prob=c(0.6,0.4)) # take 60 percent of the indices for training
+training <- bank[trainingIndex, ] # assign the respective values of trainingIndex to training
+validation <- bank[!trainingIndex, ] # the values that have not been assigned to training, are assigned to validation
+
+nrow(training)/nrow(validation) # check the proportions
+```
+The ratio of both fractions is roughly 1.5 what can be expected since 60/40 = 1.5.
+
+## a)
+
+### Fit the model to the data for (1) logistic regression, (2) k-nearest neighbors with k = 3, and (3) classification trees. Use Personal Loan as the outcome variable. Report the validation confusion matrix for each of the three models.
+
+The first model to approach is the logistic regression.
+```{r, message=FALSE, warning=FALSE}
+logisticModel <- glm(Personal.Loan ~ ., data = training, family = binomial("logit")) # using the glm function, Personal Loan is regressed on all other variables from data, the family is binomial("logit") because Personal Loan is binary
+```
+
+The next model to train is the knn-model.
+
+```{r, message=FALSE, warning=FALSE}
+normalValues <- preProcess(training[,c(1:8,10:13)], method = c("center", "scale")) # the data are centered and scaled first
+normalTraining <- training # define normalTraining currently as a placeholder for later assigned data
+normalValidation <- validation # same for normalValidation
+
+normalTraining[,c(1:8,10:13)] <- predict(normalValues, training[,c(1:8,10:13)]) # insert normalized data for normalTraining
+normalValidation[,c(1:8,10:13)] <- predict(normalValues, validation[,c(1:8,10:13)]) # same for normalValidation
+
+knnModel <- knn(train = normalTraining[,c(1:8,10:13)], test = normalValidation[,c(1:8,10:13)], cl = normalTraining[,9], k = 3, prob = TRUE) # derive the prediction by a knn model for the validation data with k = 3 and since the probabilities are needed later on, prob = TRUE
+```
+
+The third model is the tree model.
+```{r, message=FALSE, warning=FALSE}
+treeModel <- rpart(Personal.Loan ~ ., data = training, method = "class") # derive the tree model with the method "class"
+```
+
+Now, the confusion matrices of the three models can be compared.
+```{r, message=FALSE, warning=FALSE}
+# confusion matrix for the logistic model
+confusionMatrix(data=as.factor(validation$Personal.Loan), reference = as.factor(round(predict(logisticModel, validation[,-9], type = "response"), 0)))
+
+# confusion matrix for the knn model
+confusionMatrix(data=as.factor(validation$Personal.Loan), reference = as.factor(as.character(knnModel)))
+
+# confusion matrix for the tree model
+confusionMatrix(data=as.factor(validation$Personal.Loan), reference = as.factor(as.character(predict(treeModel, validation[,-9], type = "class"))))
+```
+
+The accuracy of the tree model is surprisingly good with 98.15 %. The knn model achieves 95.44 % and the logistic model 94.21 %.
+
+## b)
+
+### Create a data frame with the actual outcome, predicted outcome, and each of the three models. Report the first 10 rows of this data frame.
+
+The probabilities of the knn model must be extracted, first. Because the probabilities of the winning class are given, they have to be transformed into probabilities for 1 being the correct result.
+```{r, message=FALSE, warning=FALSE}
+knnLoanProb <- numeric(nrow(validation)) # create a vector of 0s in the length of the validation set
+for (i in 1:nrow(validation)){ # go through this vector
+  if (knnModel[i] == 1){ # if the prediction is 1
+    knnLoanProb[i] = tail(attributes(knnModel)$prob, nrow(validation))[i] # take the probability for predicting 1 from the model (the model reports the probability of the winning class and since in this exercise the probability of predicting "1" is used, it can directly be taken from the model in this case)
+  }
+  if (knnModel[i] == 0){ # if the prediction is 0
+    knnLoanProb[i] = 1-tail(attributes(knnModel)$prob, nrow(validation))[i] # take 1 - the indicated probability
+  }
+}
+```
+The probabilities will be shown later on in the overview table.
+
+```{r, message=FALSE, warning=FALSE}
+options(scipen=999) # avoid scientific notation
+overview <- data.frame("TrueLoan" = validation$Personal.Loan, # insert the true value
+                       "LogisticLoanClass" = round(predict(logisticModel, validation[,-9], type = "response"), 0), # insert the predicted class from the logistic model
+                       "knnLoanClass" = as.numeric(as.character(knnModel)), # insert the predicted class from the knn model
+                       "treeLoanClass" = as.numeric(as.character(predict(treeModel, validation[,-9], type = "class"))), # insert the predicted class from the tree model
+                       "LogisticLoanProb" = round(predict(logisticModel, validation[,-9], type = "response"),4), # insert the probability of 1 being the right answer from the logistic model
+                       "knnLoanProb" = round(knnLoanProb, 4), # insert the probability of 1 being the right prediction from the knn model
+                       "treeLoanProb" = round(as.numeric(as.character(predict(treeModel, validation[,-9], type = "prob")[,2])), 4) # insert the probability of 1 being the right answer from the tree model
+)
+kable(head(overview, 10)) # return the first 10 rows of the dataframe
+```
+The data frame contains the true values, the predicted classes and the probabilities of 1 being the right prediction for every model.\
+Since there were only 3 neighbors in knn, the probability in this column can only be a multiple of 1/3.
+
+## c)
+
+### Add two columns to this data frame for (1) a majortiy vote of predicted outcomes, and (2) the average of the predicted probabilities. Using the classifications generated by these two methods derive a confusion matrix for each method and report the overall accuracy.
+
+The ensemble methods majority vote and average are now applied. For this, extra columns are added to the overview table.
+```{r, message=FALSE, warning=FALSE}
+overview <- data.frame(overview, # take the old columns
+                       "majorityClass" = round((overview$LogisticLoanClass+overview$knnLoanClass+overview$treeLoanClass)/3, 0), # take majority vote by rounding the average of the class predictions to the nearest integer
+                       "averageProb" = round((overview$LogisticLoanProb+overview$knnLoanProb+overview$treeLoanProb)/3, 4), # take the average of the probabilities and round it to the 4th digit
+                       "averageClass" = round((overview$LogisticLoanProb+overview$knnLoanProb+overview$treeLoanProb)/3, 0) # take the average of the probabilities and round it to the next integer
+                       )
+
+kable(head(overview, 10)) # show the first 10 lines of overview
+```
+3 columns were added where two of them predict a new classification. The performance of these prediction is shown below by producing the confusion matrices.
+
+```{r, message=FALSE, warning=FALSE}
+confusionMatrix(data=as.factor(overview$TrueLoan), reference = as.factor(overview$majorityClass)) # produce the confusion matrix for the majority vote approach
+confusionMatrix(data=as.factor(overview$TrueLoan), reference = as.factor(overview$averageClass)) # produce the confusion matrix or the average approach
+```
+The overall accuracy of the average method is 97.03 % and the overall accuracy of the majority vote method is 96.15 %.
+
+## d)
+
+### Compare the error rates for the three individual methods and the two ensemble methods.
+
+Surprisingly, both ensemble approaches perform worse than the tree method alone (accuracy: 98.15 %) but still better than the logistic regression (accuracy: 94.21 %) and the knn approach (accuracy: 95.44 %). The average method is with an accuracy of 97.03 % slightly better than the majority vote method with 96.15 %.
+
+Comparing sensitivity and specificity of the methods, on can see that especially for specificity, ensembles can make difference. 96.30 % for the average method and 94.26 % for the majority vote method are distinct better than 78.69 % for the logistic regression and 91.23 % for the knn model. Only Tree method can reach a comparable value with 96.23 %.\
+The sensitivity is more comparable between the 5 methods. Surprisingly, the tree method has the highest value with 98.32 %, closely follow by the average method and the majority vote method with 97.08 % and 96.26 %, respectively. The knn method has a value of 95.70 % and the logistic method 95.24 %.
+
+## References
+
+#### Packages
+
+  Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data Structures,
+  Summaries, and Visualisations for Missing Data_. R package version
+  0.6.1, <https://CRAN.R-project.org/package=naniar>.
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R
+  package version 1.14.2, <https://CRAN.R-project.org/package=data.table>.
+  
+  Venables, W. N. & Ripley, B. D. (2002) Modern Applied Statistics with S.
+  Fourth Edition. Springer, New York. ISBN 0-387-95457-0
+
+  Therneau T, Atkinson B (2022). _rpart: Recursive Partitioning and
+  Regression Trees_. R package version 4.1.16,
+  <https://CRAN.R-project.org/package=rpart>.
+  
+  Kuhn M (2022). _caret: Classification and Regression Training_. R
+  package version 6.0-93, <https://CRAN.R-project.org/package=caret>.
+  
+  Yihui Xie (2022). knitr: A General-Purpose Package for Dynamic Report
+  Generation in R. R package version 1.40.
+
+  Yihui Xie (2015) Dynamic Documents with R and knitr. 2nd edition.
+  Chapman and Hall/CRC. ISBN 978-1498716963
+
+  Yihui Xie (2014) knitr: A Comprehensive Tool for Reproducible Research
+  in R. In Victoria Stodden, Friedrich Leisch and Roger D. Peng, editors,
+  Implementing Reproducible Computational Research. Chapman and Hall/CRC.
+  ISBN 978-1466561595
+  
