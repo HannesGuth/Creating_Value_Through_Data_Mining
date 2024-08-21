@@ -1,0 +1,367 @@
+---
+title: "Homework 1"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Task 4.1. {.tabset}
+
+## Introduction
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+At the beginning, a few immediately necessary packages will loaded. Other packages will be loaded thoughout the document, when they are needed and applied.
+```{r, message = FALSE, warning = FALSE}
+library(data.table) # package to handle datatables
+library(plotly) # package for interactivity of plots
+library(rstatix) # package for piping and basical statistical tests
+```
+```{r, message = FALSE, warning = FALSE}
+# Setting the document colour unigecol and loading the dataset
+unigecol = "#D20D63" # setting the colour that will be used for most visualisations (where applicable) to maintain a uniform impression
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining") # set working directory
+cereals <- fread("Cereals.csv") # read CSV-file
+```
+The first step in this analysis will be to get an overview about the data in the dataset.
+
+```{r}
+summary(cereals) # basic command to get a summary of the datatset
+```
+The dataset contains 16 variables and 77 rows of observations.\
+The main contents are one observation for each sort of cereal and corresponding characteristics, i.e. nutrition values. Also, we can find a variable shelf and rating. Most variables are numeric.\
+Missing values are only in carbo and sugar, 1 each and 2 NAs in potass. These rows will not be removed in advance but whenever they become a problem to keep the maximum number of rows for each analysis.
+
+## a)
+### Which variables are quantitative/numerical? Which are ordinal? Which are nominal?\
+
+name:     nominal\
+mfr:      nominal\
+type:     nominal\
+calories: numeric\
+protein:  numeric\
+fat:      numeric\
+sodium:   numeric\
+fibre:    numeric\
+carbo:    numeric\
+sugar:    numeric\
+potass:   numeric\
+vitamins: numeric\
+shelf:    ordinal\
+weight:   numeric\
+cups:     numeric\
+rating:   numeric\
+
+## b)
+
+### Compute the mean, median, min, max, and standard deviation for each of the quantitative variables.
+This can be done through R's sapply (e.g., sapply(data, mean, na.rm = TRUE)). No further comment will be made on the particular outcomes.
+
+```{r, message=FALSE, warning=FALSE}
+# using sapply for calculating the descriptive measures, removing NAs
+sapply(cereals[,c(4:12,14:16)], mean, na.rm = TRUE)
+sapply(cereals[,c(4:12,14:16)], min, na.rm = TRUE)
+sapply(cereals[,c(4:12,14:16)], max, na.rm = TRUE)
+sapply(cereals[,c(4:12,14:16)], sd, na.rm = TRUE)
+```
+
+## c) {.tabset}
+
+### Core task
+
+#### Use R to plot a histogram for each of the quantitative variables. Based on the histograms and summary statistics, answer the following questions. (on the next tabs)
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(gather(cereals[,c(4:12,14:16)]),aes(value)) + # ggplot with data from the quantitative variables of cereals
+    geom_histogram(bins = 10, fill = unigecol, alpha = 0.6) + # optics of the histograms
+    facet_wrap(~key,scales="free_x") + # make x-axis loose
+    theme(axis.ticks.x=element_blank(), # no ticks
+          axis.ticks.y=element_blank(), # no ticks
+          panel.spacing = unit(2, "lines") #spacing between the panels
+    ) +
+    xlab("Values") + # x-label
+    ylab("Count") + # y-label
+    ggtitle("Quantitative variables - overview")
+)
+
+```
+\
+These 12 histograms show the distribution of the numeric variables. Some seem to be approximately normal distributed, e.g. calories, carbo and rating. Others like sugar rather seem to be equally distributed but there are various forms of other distributions as well. At the x-axis, one can see that the data are not normalised since all variables don't have a mean of 0 and that all variables range in different areas and intervals. Sodium for example ranges between 0 and more than 300 while cups does so between 0.4 and 1.6.
+
+### i)
+
+#### Which variables have the largest variability?\
+The highest standard deviations (and therefore variability) can be found at sodium (83.83) and potass (70.41).\
+\
+
+### ii)
+#### Which variables seem to be skewed?\
+Rating, potass, fibre, fat, vitamins and protein seem to be skewed.\
+To get a precise impression which variables are indeed skewed, the skewness values will be computed as follows:
+
+```{r, message=FALSE, warning=FALSE}
+library(e1071) #package for skewness
+sapply(cereals[,c(4:12,14:16)], skewness, na.rm = TRUE) # calculating skewness
+```
+\
+Assuming a fairly symmetrical distribution for values ∈ [-0.5,0.5], a moderate skewness for values ∈ [-1,-0.5) and values ∈ (0.5,1] and strong skewness for values (-∞, -1) and values ∈ (1,∞), the following can be stated:\
+\
+not skewed: calories, carbo, sugars, weight, cups\
+moderately skewed: protein, sodium, rating\
+strongly skewed: fat, fiber, potass, vitamins\
+\
+
+### iii)
+#### Are there any values that seem extreme?\
+By the previous seen visualisations, one can state following two observations:\
+As mentioned before, fat, fiber, potass and vitamins are strongly skewed.\
+The distributions of weight and and vitamins seem to be central.
+\
+\
+But to get real insight into outliers, it will be necessary to use boxplots of the quantitative variables. This will be done in the following abstract.\
+
+```{r, message=FALSE, warning=FALSE}
+library(gridExtra)
+plot1 <- ggplot(cereals, aes(y=cereals$calories)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Calories") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+
+plot2 <- ggplot(cereals, aes(y=cereals$carbo)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Carbo") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+plot3 <- ggplot(cereals, aes(y=cereals$cups)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Cups") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+
+plot4 <- ggplot(cereals, aes(y=cereals$fat)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Fat") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+plot5 <- ggplot(cereals, aes(y=cereals$fiber)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Fiber") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+
+plot6 <- ggplot(cereals, aes(y=cereals$potass)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Potass") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+plot7 <- ggplot(cereals, aes(y=cereals$protein)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Protein") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+
+plot8 <- ggplot(cereals, aes(y=cereals$rating)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Rating") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+plot9 <- ggplot(cereals, aes(y=cereals$sodium)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Sodium") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+
+plot10 <- ggplot(cereals, aes(y=cereals$sugars)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Sugars") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+plot11 <- ggplot(cereals, aes(y=cereals$vitamins)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Vitamins") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+
+plot12 <- ggplot(cereals, aes(y=cereals$weight)) +
+  geom_boxplot(fill = unigecol, outlier.colour = "black", outlier.size = 3) +
+  labs(title = "Weight") +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank())
+
+grid.arrange(plot1, plot2, plot3, plot4, plot5, plot6, plot7, plot8, plot9, plot10, plot11, plot12, ncol=3)
+```
+\
+As mentioned above, weight seems to be very centralised, so everything that is not approximately equal to 1 appears to be outlying. A similar picture is drawn for vitamins, just with a value of about 25. For cups, fiber, potass, rating and protein, there are a few outliers, all above the 75%-quantile. Only calories has outliers in a significant number and in both directions. (beside weight and vitamins)\
+
+## d)
+
+### Use R to plot side-by-side-boxplot comparing the calories in hot vs. cold cereals. What does this plot show us?\
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(cereals, aes(x = cereals$type, y = cereals$calories)) + #ggplot with type on the x-axis and calories on the y-axis
+    geom_boxplot(fill = c("blue","red"), color = "black") + # optics
+    ggtitle("Calories of cold and hot cereals") + #title
+    labs(x = "Cold and hot cereals", y = "Calories") # axis-labels
+)
+```
+The right plot for cold cereals tells that the amount of calories varies mostly (75 %) between 100 and 110 calories. A few outliers in both directions can be detected.\
+The plot on the left is not very informative due to a lack of data. There are only three hot cereals in the dataset and these have exactly 100 calories each, see the following table.\
+
+```{r, message=FALSE, warning=FALSE}
+cereals[type == "H", c("name", "type", "calories")] # picking the names, types (just for visualisation) and calories of hot cereals
+```
+
+\
+
+## e)
+
+### Use R to plot a side-by-side boxplot of consumer rating as a function of the shelf height. If we were to predict consumer rating from shelf height, does it appear that we need to keep all three categories of shelf height?\
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(cereals, aes(x = as.factor(cereals$shelf), y = cereals$rating)) + # ggplot with shelf as a factor on the x-axis and the rating on the y-axis
+    geom_boxplot(fill = unigecol, color = "black") + # optics
+    ggtitle("Rating in accordance to shelf type") + # title
+    labs(x = "Shelf types", y = "Rating") # labels
+)
+```
+\
+As one can see, the outer plot of shelf height 1 and 3 are quite similar except the median that is slightly higher for shelf height 1. If predicting consumer rating from the information shelf height = 1 or shelf height = 3, we would get a similar result. One of them could therefore be abandoned. For shelf height 2, an obvious lower consumer rating can be observed. This distinction should be kept.
+
+## f) {.tabset}
+
+### Core task
+
+#### Compute the correlation table for the quantitative variables (function cor()). In addition, generate a matrix plot for these variables (function plot(data)).
+```{r, message=FALSE, warning=FALSE}
+library(reshape2) # needed for the correlation matrix
+library(DT) # needed for representing the tables in a proper way
+```
+
+```{r, message=FALSE, warning=FALSE}
+corr_mat <- round(cor(cereals[,c(4:12,14:16)], use ="complete.obs"),2) # new datatable with all numeric variables, using only complete observations
+DT::datatable(corr_mat)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(GGally)
+library(ggpubr)
+melted_corr_mat <- melt(corr_mat)
+ggplotly(
+  ggplot(data = melted_corr_mat, aes(x = Var1, y = Var2, fill=value)) + geom_tile() + geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) + scale_fill_gradient(low=unigecol, high="white")+ theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + ggtitle("Correlation matrix for numeric variables") + xlab("") + ylab("")
+)
+```
+The darker the color appears to either white or red, the stronger is the correlation in the positive respectively negative direction.
+
+```{r, message=FALSE, warning=FALSE}
+# interactivity through plotly has been removed consciously due to the generally crowdedness of the graph and therefore no real additional value through plotly.
+
+ggpairs(
+    cereals[,c(4:12,14:16)], upper = "blank"
+) + labs(title = "Matrix plot for quantitative variables") +   rremove("x.axis") + 
+    rremove("xlab") +
+    rremove("x.text") +
+    rremove("x.ticks") +
+    rremove("legend") +
+    rremove("y.axis") +
+    rremove("ylab") +
+    rremove("y.text") +
+    rremove("y.ticks")
+```
+\
+Unfortunately, there are many quantitative variables, so that the plot appears very crowded. General statements can barely be made.
+
+### i)
+
+#### Which pair of variables is most strongly correlated?
+
+The strongest correlation can seen between fiber and potass with a Pearson correlation coefficient of 0.91. This positive relation can also be seen in the graph below.\
+The strongest negative relationship is between rating and sugars (-0.76) and calories (-0.69), where one has to take into account that sugar and calories also have a strong positive relationship (0.57).\
+Interesting is that the more sugar and fat, one sort of cereal has, the worse it is rated (on average). Consumers seem to appreciate healthy cereals.\
+\
+Following graph will present the relationship between fiber and potass that is positive and seems to be approximately linear. Therefore, also a linear regession line will be plotted.
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(data = cereals, mapping = aes(x = fiber, y = potass)) + # ggplot with fiber and potass as inputs
+    geom_point(shape = 20, fill = unigecol, color = unigecol, size = 3) + # scatterplot characteristics
+  geom_smooth(method = lm, se = FALSE, color = "black") + # abline, using a linear model
+    labs(title = "Correlation between fiber and potass") # title
+)
+```
+
+
+### ii)
+
+#### How can we reduce the number of variables based on these correlations?
+
+When 2 variables are correlated, on can easily leave one of them out to reduce the number of variables. This is due to the situation that the extra information that one of these variables delivers can also be derived from the respective correlated variable because one could use this second variable to predict the first one.\
+\
+
+### iii)
+
+#### How would the correlations change if we normalized the data first?
+In the following, both matrices, for un-normalised and normalised data will be (re-)plotted and compared.\
+```{r, message=FALSE, warning=FALSE}
+cor_mat <- round(cor(cereals[,c(4:12,14:16)], use ="complete.obs"),2) 
+norm_cor_mat <- round(cor(scale(cereals[,c(4:12,14:16)]), use ="complete.obs"),2) # normalised data so that each variable has a mean value of 0 and unit variance value, only complete observations, rounded on the second digit
+melt_cor_mat <- melt(cor_mat)
+melt_norm_cor_mat <- melt(norm_cor_mat)
+
+# plotting the un-normalised data
+ggplotly(
+  ggplot(data = melt_cor_mat, aes(x=Var1, y = Var2, fill=value)) + geom_tile() + geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) + scale_fill_gradient(low=unigecol, high="white")+ theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + ggtitle("Correlation matrix for numeric variables") + xlab("") + ylab("")
+)
+
+# plotting the normalised data
+ggplotly(
+  ggplot(data = melt_norm_cor_mat, aes(x=Var1, y = Var2, fill=value)) + geom_tile() + geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) + scale_fill_gradient(low=unigecol, high="white")+ theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + ggtitle("Correlation matrix for numeric variables") + xlab("") + ylab("")
+)
+```
+\
+The plots look the same but to be sure not to overlook differences, the following table will compare the single values.
+\
+```{r, message=FALSE, warning=FALSE}
+DT::datatable(cor_mat == norm_cor_mat)
+```
+\
+The result did not change. Standardisation has no effect on the correlation matrix.
+

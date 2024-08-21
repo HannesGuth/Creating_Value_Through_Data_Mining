@@ -1,0 +1,22 @@
+---
+title: "5.6"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## a)
+The current average profit per customer is 2,500 USD. The task is to calculate the estimated profit for 1,000 new leads. In order to calculate the estimated profit, these numbers need to be multiplied. The result is 2,500,000 USD for the estimated profit. (2,500 USD/customer * 1,000 customers)
+
+## b)
+In the decile-wise lift chart, one can see that only targeting the first 10% of the originally 1,000 leads (100 leads, 1 decile) would lead the profit to be more than twice the sales cost.
+
+## c)
+When setting the cutoff value lower, i.e. to 2,500 USD, what equals 1,0 * sales cost and therefore a less ambitioned value, it will be possible for the bank to target more customers and reaching its purpose, in this example the leading 60% (6 deciles) of the 1,000 new leads. Hence, the number of targeted customers can be 6x larger by dividing the target value by only 2.
+
+## d)
+The model would predict the profit for the whole group of 1,000 leads. Targeting all of the new leads might not be efficient because not all of them are equally likely to finally buy a service from the bank. Pursuing a fixed (and ambitioned) profit-cost-ratio for so many leads can be very costly in terms of sales costs, no matter if the single lead will eventually buy a service. Focusing on only a small but promising group of leads, i.e. the leading 10% from b), can be more successful when it is about the relation of profits and costs. Therefore, using a two-stage process to first identify the customers to target and then targeting only them seems more promising than targeting all.\
+Nevertheless, when maximising profit, the bank should follow the approach from c) since as long as marginal profit (expected profit of targeting the next "best" customer on the ranking from the decile chart) exceeds marginal cost of this customer, expected profit will be increased.

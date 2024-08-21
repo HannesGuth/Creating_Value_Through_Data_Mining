@@ -1,0 +1,307 @@
+---
+title: "Task 7.2"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+## Data exploration
+
+Before the tasks can be addressed, the data has to be explored.\
+As a first step, necessary packages will be loaded.
+```{r, message = FALSE, warning = FALSE}
+library(naniar) # handling missing values
+library(fastDummies) # package to create dummy-variables
+library(data.table) # package for handling data in a datatable
+library(ggplot2) # package for plots
+library(class) # allows to get a numerical output variable
+library(dplyr) # package for piping
+library(FNN) # allows to get a list of nearest neighbours
+library(caret) # allow the training for classification problems
+```
+
+```{r, message = FALSE, warning = FALSE}
+bank.df <- read.csv("UniversalBank.csv") # load dataframe
+```
+
+```{r}
+dim(bank.df) # number of rows/observations and variables
+```
+The dataframe has 14 variables and 5000 observations.
+
+```{r}
+str(bank.df) # returns the type and the head of the columns/variables
+```
+Except one variable (CCAvg), all variables are in integer-form.
+
+```{r}
+summary(bank.df) # creates a summary for all variables
+```
+Due to the different dimensions of variables, one can see that the variables are not normalised yet. This needs to be done later on in attempt to run knn-methods.\
+One can also see that the minimum value of experience is negative even though this column should denote years, which can not be negative.
+
+```{r}
+count = 0 # set a new counter to 0
+for (i in 1:nrow(bank.df[])){ # for all observations in the table
+  if (bank.df[i,3] < 0){ # if there is an observation of negative years
+    count <- count + 1} # add 1 to the counter
+}
+count # print the counter
+count/nrow(bank.df[]) # calculate the number ob negative year observation to the overall observations
+```
+This issue affects 52 values, that is roughly 1 % of the data. Without further information, one might assume that this can be a measure for experience in a special field where experience from another field might be hindering. It could also be years in prison or just false data, while this case seems unlikely regarding that 52 cases accumulate in only 3 negative years. Because of this, these data will be kept.
+
+```{r}
+uniquevalues <- data.table("Name" = "", "Number" = numeric(14)) # new datable to get an overview about unique values of the variables
+for (i in 1:14){
+  uniquevalues[i,1] = colnames(bank.df)[i] # assigning the name
+  uniquevalues[i,2] = length(unique(bank.df[,i])) # assigning the number
+}
+uniquevalues # show result
+```
+\
+This table shows how many different observations there are in the dataset for each variable.\
+The variables Personal.Loan, Security.Account, CD.Account, Online and CreditCard are binary. The other variables are either categorical or numeric.
+
+```{r, message = FALSE, warning = FALSE}
+gg_miss_var(bank.df) # plot graph for missing variables
+```
+\
+In this dataset, there are no missing values.
+
+## Preparation of data
+
+Here, 0s and 1s will be replaced by more interpretable names and dummy variables will be created.
+```{r}
+# re-assigning names to substitute 0s and 1s, so that the result of knn later on will return something more interpretable than 0 and 1
+for (i in 1:5000){
+  if (bank.df[i,10] == 1){ # 1 stands for having accepted a personal loan and will be replaced by that
+    bank.df[i,10] = "personal loan"
+  }
+  else{ # vice versa for 0
+    bank.df[i,10] = "no personal loan"
+  }
+}
+head(bank.df[,10])
+```
+
+In this step, education will be changed to dummy-variables since it is categorical.
+```{r, message = FALSE, warning = FALSE}
+set.seed(1)
+bank.dummy <- dummy_cols(bank.df, select_columns = "Education") # creating dummies for Education
+bank.df <- bank.dummy %>% select(c(2:4,6,7,9:17)) # selecting only the necessary columns using the pipe operator
+```
+## a)
+
+#### The approach to this and the upcoming tasks in 7.2 will in parts follow the ideas proposed in Shmueli et al (2018), pp. 176-179.
+\
+\
+
+The accepting or not-accepting a loan of a customer with special characteristics shall be estimated by the use of knn.\
+At first, the data will be split into a training- and a validation set.
+
+```{r, message = FALSE, warning = FALSE}
+set.seed(1) # for reproducability of the random sampling, use set.seed(1)
+trainIndex <- sample(row.names(bank.df), 0.6*dim(bank.df)[1]) # splitting indices in to 60 % (and the rest)
+validIndex <- setdiff(row.names(bank.df), trainIndex) # valid gets the indices that train did not get
+
+# assigning values to trainDF and validDF according to their assigned indices
+# assigning values from bank.df respective to the already assigned indices
+trainDF <- bank.df[trainIndex, ]
+validDF <- bank.df[validIndex, ]
+
+# assigning values to the entitity that shall be estimated by knn
+# due to the upcoming process of normalising, the new entity will be attached to trainDF so that it can be normalised together with all the other data. This makes it necessary to arbitrarily insert a value for Personal.Loan.
+newDF <- data.frame(Age = 40, Experience = 10, Income = 84, Family = 2, CCAvg = 2, Mortgage = 0, Personal.Loan = "personal loan", Securities.Account = 0, CD.Account = 0, Online = 1, CreditCard = 1, Education_1 = 0, Education_2 = 1, Education_3 = 0)
+
+# appending the new entitity to trainDF in order to create a new dataframe and normalise it will all the other values
+trainDF[nrow(trainDF) + 1, ] <- newDF
+# creating a new dataframe, trainDF2 with contents of trainDF
+trainDF2 <- trainDF
+# delete the added row from trainDF, trainDF will be the same as it has been before adding the new entity
+trainDF <- trainDF[-3001, ]
+
+# creating new dataframes to store later on the normalised data, putting values in, here, has no effect but is rather a placeholder for the later upcoming normalised values
+normalTrainDF <- trainDF
+normalValidDF <- validDF
+normalBankDF <- bank.df
+```
+
+The data needs to be normalised before knn can be applied.
+```{r, message = FALSE, warning = FALSE}
+#normalising trainDF using preProcess, center shall center the data around a common average and scale scales the data so that a column with high values does not have more influence on the result than a column with small values
+normalValues <- preProcess(trainDF[, c(1:6,8:14)], method = c("center", "scale"))
+
+# normalising trainDF2, including the added row. trainDF and trainDF2 will be both normalised with "scale", so that there is no difference in the method itself. Nevertheless, using preProcess, one cannot simply extract the last row, so that another command was used, using the pipe operator.
+trainDF2 <- trainDF2 %>% mutate_at(c(1:6,8:14), ~(scale(.) %>% as.vector)) #trainDF2 are the data to be normalised, mutate_at finally normalises the data, scale(.) is the actual normalisation and the result shall be a vector
+
+newDF <- trainDF2[nrow(trainDF),] # from this take only the last row
+newDF <- newDF[, c(1:6,8:14)] # take the relevant columns
+
+head(normalTrainDF)
+# predict the values for the normalDFs
+normalTrainDF[, c(1:6,8:14)] <- predict(normalValues, trainDF[, c(1:6,8:14)])
+normalValidDF[, c(1:6,8:14)] <- predict(normalValues, validDF[, c(1:6,8:14)])
+normalBankDF[, c(1:6,8:14)] <- predict(normalValues, bank.df[, c(1:6,8:14)])
+normalNewDF <- predict(normalValues, newDF)
+```
+
+Here, the knn-function from the FNN package is applied to finally predict the new entity.
+```{r}
+# deleting the column that is to predict
+# use the knn function to predict the new entity
+pred <- knn(train = normalTrainDF[, c(1:6,8:14)], test = normalNewDF, cl = normalTrainDF[, 7], k = 1) # use selected normalTrainDF as data to predict cl (for training), use normalNewDF as object on which the the prediction shall be executed, k = 1: Using only the closest nearest neighbour
+
+# showing the result of the knn estimation
+pred
+```
+The prediction is "no personal loan" for a customer with the values given above.
+
+## b)
+In this task it shall be examined which k provides the best balance between overfitting and ignoring the predictor information.
+```{r, message = FALSE, warning = FALSE}
+accuracy <- data.frame(k = seq(1,14,1), accuracy = rep(0,14)) # create a new dataframe with ks to store the results
+head(accuracy)
+
+for(i in 1:14){
+  prediction <- knn(normalTrainDF[, c(1:6,8:14)], normalValidDF[, c(1:6,8:14)],
+                  cl = normalTrainDF[, 7], k = i) # for each k from 0 to 14, execute the prediction
+  accuracy[i, 2] <- confusionMatrix(prediction, as.factor(normalValidDF[, 7]))$overall[1] # assigning the accuracy-value to the respective k in the accuracy dataframe
+}
+
+accuracy <- as.data.table(accuracy) # use a datatable instead of dataframe
+ggplot(accuracy, aes(x = k, y = accuracy)) + # create a ggplot with the values of k on the x-axis and the respective accuracy on the y-axis
+  geom_line() + # shall be a lineplot
+  labs(title = "Accuracy for different ks") # title
+
+accuracy <- accuracy[order(-accuracy),] # order descending
+accuracy # display the results
+```
+A k of 3 seems to optimal. It provides an accuracy of 96.4 %. Nevertheless, the other ks are similarly good, the lowest value is 95.0 % for k = 13.\
+As can be seen in the plot, the accuracy is fluctuating but overall descending in a rising k. The even numbers usually have a lower value than their uneven neighbours.
+
+## c)
+In this task, a confusion matrix for k = 3 will be created.
+```{r, message = FALSE, warning = FALSE}
+prediction <- knn(normalTrainDF[, c(1:6,8:14)], normalValidDF[, c(1:6,8:14)],
+                cl = normalTrainDF[, 7], k = 3) # make the prediction as above but with k = 3 (optimal k) and for all aboservations that were assigned to normalValidDF
+
+# use the function "confusionMatrix" and using factors of the relevant column
+confMatr <- confusionMatrix(prediction, as.factor(normalValidDF[, 7])) #
+confMatr # show the result
+```
+\
+It is to observe that sensitivity is very high with 99.5% while specificity is quite low with 69.27% and therefore not really usable. 205 people (63 + 142) accepted a personal loan in this set. 63 of these 205 people were wrongly predicted of not accepting a personal loan, what is 69.27%.
+\
+The prediction of the model for the test individual is therefore not very trustworthy.
+
+## d)
+Here, the previous classification with k = 1 shall be repeated with k = 3, the optimal k.
+```{r, message = FALSE, warning = FALSE}
+predk3 <- knn(train = normalTrainDF[, c(1:6,8:14)], test = normalNewDF, cl = normalTrainDF[, 7], k = 3) # repeating the prediction with k = 3
+predk3 # showing the result
+```
+The result ("no personal loan") did not change.
+
+## e)
+In this task, the data will be re-partitioned, this time in 3 different sets. Afterwards, the confusion matrices will be compared.
+
+```{r, message = FALSE, warning = FALSE}
+trainIndex <- sample(row.names(bank.df), 0.5*dim(bank.df)[1]) # the first 50 percent of indices shall be assigned to train
+train.e <- bank.df[trainIndex, ] # getting the respective data for the indices
+restIndex <- setdiff(row.names(bank.df), trainIndex) # rest shall contain the indices that have not yet been used for train
+rest.e <- bank.df[restIndex, ] # assigning values to rest.e
+testIndex <- sample(row.names(rest.e), 0.6*dim(rest.e)[1]) # splitting the indices of rest into 60% for test.e and 40% for valid.e.
+test.e <- bank.df[testIndex, ] # assigning values to test.e
+validIndex <- setdiff(row.names(rest.e), testIndex) # valid gets the indices that have not yet been assigned
+valid.e <- bank.df[validIndex, ] # valid.e is filled with values, respective to its assigned indices
+```
+
+For a quick test, the number of observations of the created sets will be set in a relation.
+
+valid.e should be 2/3 of test.e.
+train.e should approximately equal the sum of valid.e and test.e.
+```{r}
+nrow(valid.e)/nrow(test.e) # calculating proportion between the validation- and the test set
+nrow(train.e)/(nrow(valid.e) + nrow(test.e)) # calculating the proportion between the training set and the sum of the other 2 sets.
+```
+The test delivered the expected results.
+\
+Now again, normalisation of the new sets will be conducted.
+```{r, message = FALSE, warning = FALSE}
+# normalising as above
+
+# assigning values as kind of placeholders to new dataframes which will later contain the normalised values
+normalTrain.e <- train.e
+normalValid.e <- valid.e
+normalTest.e <- test.e
+normalBank.e <- bank.df
+
+# apply center and scale to the train.df and safe it to normalValues
+normalValues <- preProcess(train.e[, c(1:6,8:14)], method = c("center", "scale"))
+
+# predict with normalValues will now be used to normalise the columns of the new datasets that are later on used to predict personal loan
+normalTrain.e[, c(1:6,8:14)] <- predict(normalValues, train.e[, c(1:6,8:14)])
+normalValid.e[, c(1:6,8:14)] <- predict(normalValues, valid.e[, c(1:6,8:14)])
+normalTest.e[, c(1:6,8:14)] <- predict(normalValues, test.e[, c(1:6,8:14)])
+normalBank.e[, c(1:6,8:14)] <- predict(normalValues, bank.df[, c(1:6,8:14)])
+```
+
+In this last chunk, the confusion matrices will be produced.
+```{r, message = FALSE, warning = FALSE}
+
+# knn-prediction for valid
+nearestNeighbours1 <- knn(train = normalTrain.e[, c(1:6,8:14)], test = normalValid.e[, c(1:6,8:14)], cl = normalTrain.e[, 7], k = 3)
+# matrix for train and valid
+confMatr <- confusionMatrix(nearestNeighbours1, as.factor(normalValid.e[, 7]))
+confMatr
+
+# knn-prediction for test
+nearestNeighbours2 <- knn(train = normalTrain.e[, c(1:6,8:14)], test = normalTest.e[, c(1:6,8:14)], cl = normalTrain.e[, 7], k = 3)
+# matrix for train and test
+confMatr <- confusionMatrix(nearestNeighbours2, as.factor(normalTest.e[, 7]))
+confMatr
+```
+High values for sensitivity and low values for specificity can still be observed.\
+The accuracy for the validation dataset is a bit higher than for the test dataset. This has nothing to say because except the size of the sets, they should not differ systematically.
+
+## References
+
+### Books
+  Shmueli, G., Bruce, P., Yahav, I., Patel, N., Lichtendahl, K. (2018): Data Mining   for Business Analytics. Wiley.
+    
+### Packages
+
+Tierney N, Cook D, McBain M, Fay C (2021). _naniar: Data
+  Structures, Summaries, and Visualisations for Missing Data_. R
+  package version 0.6.1, <https://CRAN.R-project.org/package=naniar>.
+  
+Kaplan J (2020). _fastDummies: Fast Creation of Dummy (Binary) Columns and
+  Rows from Categorical Variables_. R package version 1.6.3,
+  <https://CRAN.R-project.org/package=fastDummies>.
+
+Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R
+  package version 1.14.2, <https://CRAN.R-project.org/package=data.table>.
+  
+H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag
+  New York, 2016.
+
+Venables, W. N. & Ripley, B. D. (2002) Modern Applied Statistics with S.
+  Fourth Edition. Springer, New York. ISBN 0-387-95457-0
+
+Wickham H, François R, Henry L, Müller K (2022). _dplyr: A Grammar of Data
+  Manipulation_. R package version 1.0.10,
+  <https://CRAN.R-project.org/package=dplyr>.
+
+Beygelzimer A, Kakadet S, Langford J, Arya S, Mount D, Li S (2022). _FNN:
+  Fast Nearest Neighbor Search Algorithms and Applications_. R package
+  version 1.1.3.1, <https://CRAN.R-project.org/package=FNN>.
+
+Kuhn M (2022). _caret: Classification and Regression Training_. R package
+  version 6.0-93, <https://CRAN.R-project.org/package=caret>.

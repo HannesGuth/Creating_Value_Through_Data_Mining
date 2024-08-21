@@ -1,0 +1,222 @@
+---
+title: "Task 8.1"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# {.tabset}
+
+## Data exploration
+Since the same dataset as in task 7.2 is used and data exploration was carried out in this task, no further data exploration will be executed.
+
+## Data preparation
+
+A necessary step before the analysis is to load the packages whose functions will be used throughout the document.
+```{r, message=FALSE, warning=FALSE}
+library(caret) # allows the training for classification problems
+library(data.table) # package to handle datatables
+library(pivottabler) # used to create pivot tables
+library(e1071) # includes a naive bayes function
+library(naivebayes) # includes another naive bayes function
+```
+
+In the following, the UniversalBank.csv will be loaded, partly renamed and sampled into 60:40.
+```{r, message=FALSE, warning=FALSE}
+set.seed(1)
+bank <- fread("UniversalBank.csv") # read in the file
+colnames(bank)[10] <- "PersonalLoan" # renaming
+sample <- sample(c(TRUE, FALSE), nrow(bank), replace=TRUE, prob=c(0.6,0.4)) # sampling dataset into 2 parts, equal to 60% and 40%, respectively (here just creating indices in this relation)
+training <- bank[sample, ] # training set gets 60%
+test <- bank[!sample, ] # test gets the other 40%
+
+nrow(training)/nrow(test) # it should be approximately 1.5 since 60/40 = 1.5
+```
+
+The 1s and 0s are transformed into interpretable phrases, so that a clear pivot table (2. way) can be established.
+
+```{r, message=FALSE, warning=FALSE}
+trainingPivota <- data.frame("Online" = training$Online, "CC" = training$CreditCard, "Loan" = training$PersonalLoan) # new dataframe with the three relevant columns for renaming the 0s and 1s
+for (i in 1:length(trainingPivota[,1])){ # renaming 0s and 1s in each column
+  if (trainingPivota[i,1] == 0){ # 0 in the first column refers to "no online banking" and as this it will be renamed, vice versa for 1
+    trainingPivota[i,1] = "no online banking"
+  }else{
+    trainingPivota[i,1] = "online banking"
+  }
+  if (trainingPivota[i,2] == 0){ # see explanation above
+    trainingPivota[i,2] <- "no credit card"
+  }else{
+    trainingPivota[i,2] <- "credit card"
+  }
+  if (trainingPivota[i,3] == 0){ # see explanation above
+    trainingPivota[i,3] <- "no Loan"
+  }else{
+    trainingPivota[i,3] <- "Loan"
+  }
+}
+
+head(trainingPivota)
+```
+Online Banking, CreditCard and Loan now have adapted entries.
+
+## a)
+The first way to create a pivot table is by using the ftable function, as in the following.
+```{r, message=FALSE, warning=FALSE}
+# 1. way
+pivotTablea <- ftable(training[,c("Online", "CreditCard", "PersonalLoan")]) # using ftable to create a pivot table
+pivotTableSecVara2 <- ftable(training[,c("CreditCard", "PersonalLoan", "Online")]) # a second table that satisfies the demand for Loan as a secondary row variable
+
+pivotTablea
+pivotTableSecVara2
+```
+Even though Loan is not a secondary row variable as demanded in pivotTablea, the values inside the table do not change but it appears more logic, so this table will be used in the following exercises.
+\
+\
+The second way of creating a pivot table is by the use of the package "pivottabler". 
+```{r, message=FALSE, warning=FALSE}
+# 2. way
+pivotTablea2 <- PivotTable$new() # new pivot table
+pivotTablea2$addData(trainingPivota) # data for the pivot table
+pivotTablea2$addColumnDataGroups("Online") # variable for the columns
+pivotTablea2$addRowDataGroups("Loan") # variable for secondary row, the word "secondary" does not directly apply for this way. but to get the desired data, one has to put "Loan" in first place
+pivotTablea2$addRowDataGroups("CC") # variable for the row
+pivotTablea2$defineCalculation(calculationName="Online-Loan-CC", summariseExpression="n()") #naming the calculation, stating that it shall be a summation
+pivotTablea2$renderPivot() # rendering
+```
+Unfortunately, one cannot simply access single values from this table, so it will not be used in further steps but is there mainly for representational reasons.\
+For sure, all 3 tables deliver the same result, just in different order.
+
+## b)
+In order to calculate the probability of a customer accepting a loan offer when he/she has a credit card and is an active user of online banking, the conditional Bayes formula can be used:
+\
+$P(Loan = 1 | CC = 1, Online = 1) = \frac{P(Online = 1, CC = 1 | Loan = 1) * P(Loan = 1)}{P(Online = 1, CC = 1 | Loan = 1) * P(Loan = 1) + P(Online = 0, CC = 0 | Loan = 1) * P(Loan = 1)}$
+\
+
+```{r, message=FALSE, warning=FALSE}
+probb = ((pivotTablea[4,2])/(sum(pivotTablea[,2])) * ((sum(pivotTablea[,2]))/sum(pivotTablea[,]))) / (((pivotTablea[4,2]/sum(pivotTablea[,2])) * (sum(pivotTablea[,2])/sum(pivotTablea[,]))) + (pivotTablea[4,1]/sum(pivotTablea[,1])) * (sum(pivotTablea[,1])/sum(pivotTablea[,]))) # applying the formula above and taking the values from the previously created pivot table
+                                                                   
+round(probb, 4) # show the result
+```
+
+The probability is approximately 9.6%.
+
+## c)
+The task here is to create 2 further pivot tables to execute upcoming computations.\
+The first way is to use table- and addmargins- functions. Later on, the calculations will refer to these tables.
+```{r, message=FALSE, warning=FALSE}
+tableOnline <- table("Loan" = training$PersonalLoan, "Online" = training$Online) # create a new table with Loan and Online from training (the sums of every combination of 0s and 1s)
+
+tableCreditCard <- table("Loan" = training$PersonalLoan, "CreditCard" = training$CreditCard) # create a new table with Loan and CreditCard from training
+
+tableOnlineSum <- addmargins(tableOnline, FUN = list(Total = sum), quiet = TRUE) # apply the sum function to get the total values of a row/column at the end of the respective row/column, therefore addmargins. quiet = TRUE: No mentioning of the order in which the sums/margins were calculated.
+
+tableCreditCardSum <- addmargins(tableCreditCard, FUN = list(Total = sum), quiet = TRUE) # same for CreditCard
+```
+
+In the 2. way, the pivottabler-package will be used again for more aesthetic tables. The results must not vary except the order of numbers, as can be checked in the following.
+```{r, message=FALSE, warning=FALSE}
+# 1. table for Online and Loan, same approach as in a) but only one row variable here
+c1 <- PivotTable$new()
+c1$addData(trainingPivota)
+c1$addColumnDataGroups("Online")
+c1$addRowDataGroups("Loan")
+c1$defineCalculation(calculationName = "Loan-Online", summariseExpression = "n()")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# 2. table for CC and Loan, same approach as above
+c2 <- PivotTable$new()
+c2$addData(trainingPivota)
+c2$addColumnDataGroups("CC")
+c2$addRowDataGroups("Loan")
+c2$defineCalculation(calculationName="Loan-CreditCard", summariseExpression="n()")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# show the calculated tables
+tableOnlineSum
+c1$renderPivot()
+tableCreditCardSum
+c2$renderPivot()
+```
+
+## d)
+The upcoming calculations are made based on the tables calculated before. Since it is not easily possible to access the data produced by the 2. way, the calculations will only use data from the tables that were produced in the first way but the results would not vary anyway.\
+The values are named as their respective task-number.
+
+```{r, message=FALSE, warning=FALSE}
+i <- (tableCreditCardSum[2,2]/tableCreditCardSum[2,3]) # calculating the value for question i number of observations with Loan = 1 and CreditCard = 1 per overall observations with Loan = 1
+
+round(i,4) # rounding the result to the 4th digit
+
+ii <- (tableOnlineSum[2,2]/tableOnlineSum[2,3]) # same principle as for i) but with for Online instead of CreditCard
+round(ii, 4)
+
+iii <- (tableOnlineSum[2,3]/tableOnlineSum[3,3]) # proportion of those with Loan = 1 to the sum of people with Loan = 0 and Loan = 1
+round(iii, 4)
+
+iv <- (tableCreditCardSum[1,2]/tableCreditCardSum[1,3]) # proportion of those who have a credit card and no loan to those who have a credit card, no matter of Loan = 0 or Loan = 1
+round(iv, 4)
+
+v <- (tableOnlineSum[1,2]/tableOnlineSum[1,3]) # same approach as for iv) but for the Online table
+round(v, 4)
+
+vi <- 1 - iii # since Loan is binary, P(Loan = 0) is 1 - P(Loan = 1), what was calculated in iii)
+round(vi, 4)
+```
+
+## e)
+In this task, the values calculated in d) will be plugged into the bayes formula from b) to compute P(Loan = 1 | CC = 1, Online = 1).
+
+```{r, message=FALSE, warning=FALSE}
+e <- (i * ii * iii) / (iv * v * vi + i * ii * iii) # using the formula from b) and data from d) to compute the desired value in task e)
+round(e, 4)
+```
+
+## f)
+The results are roughly the same, around 10%. The value from e) is approximately 1.3% bigger than the value from b).\
+The value from the formula from b) is more accurate because the Naive Bayes from e) requires conditional independence that is not necessarily given. (Shmueli et al (2018), pp. 188-192)
+
+## g)
+In this task, the naive Bayes model will be applied on the training data. Since there are, again, different methods to do this, the function "naiveBayes" (package: e1071) and "naive_bayes" (package: naivebayes) will be used. The results should be the same.
+\
+Basically all data from pivotTablea, either direct or indirect via a sum were used to calculate P(Loan = 1 | CC = 1, Online = 1).
+```{r, message=FALSE, warning=FALSE}
+bayesmodel <- naiveBayes(Loan ~ ., data = trainingPivota) # running bayes model with naiveBayes formula
+bayesmodel # show the output
+
+model <- naive_bayes(Loan ~ ., data = trainingPivota) # running model with naive_bayes formula
+model # show the output
+```
+10.96% from e) is roughly 1.2% bigger than 9.74% from g). Since in e) the naive Bayes formula is used, instead of the precise Bayes, its value is further away from the accurate computation from b).\
+
+
+## References
+
+### Books
+  Shmueli, G., Bruce, P., Yahav, I., Patel, N., Lichtendahl, K. (2018): Data Mining   for Business Analytics. Wiley.
+  
+### Packages
+  Kuhn M (2022). _caret: Classification and Regression Training_. R package
+  version 6.0-93, <https://CRAN.R-project.org/package=caret>.
+
+  Dowle M, Srinivasan A (2021). _data.table: Extension of `data.frame`_. R
+  package version 1.14.2, <https://CRAN.R-project.org/package=data.table>.
+  
+  Bailiss C (2022). _pivottabler: Create Pivot Tables_. R package version
+  1.5.4, <https://CRAN.R-project.org/package=pivottabler>.
+
+  Meyer D, Dimitriadou E, Hornik K, Weingessel A, Leisch F (2022). _e1071:
+  Misc Functions of the Department of Statistics, Probability Theory Group
+  (Formerly: E1071), TU Wien_. R package version 1.7-11,
+  <https://CRAN.R-project.org/package=e1071>.
+  
+  Majka M (2019). _naivebayes: High Performance Implementation of the Naive
+  Bayes Algorithm in R_. R package version 0.9.7,
+  <https://CRAN.R-project.org/package=naivebayes>.
+  
+  
+  

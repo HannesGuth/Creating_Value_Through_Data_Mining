@@ -1,0 +1,624 @@
+---
+title: "Homework 1"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Task 3.4. {.tabset}
+
+## Introduction
+At first, some immediately necessary packages are loaded. Throughout the document, other packages will be added at the point where they are needed, to make it more clear, which package was used for what.\
+
+```{r test, message=FALSE, warning=FALSE}
+library(data.table) #package to import and work with datatables
+library(lubridate) #package to transform dates
+library(plotly) #package used here for interactive visualisations
+```
+
+Some important settings are made right at the beginning:
+```{r, message=FALSE, warning=FALSE}
+#Preparational tasks
+unigecol = "#D20D63" #setting the colour that will be used for most visualisations (where applicable) to maintain a uniform impression
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining") #set wprking directory
+sales <- fread("LaptopSales_red.csv") #read the datatable for this task
+sales[, TransDate:=as_date(Date, format="%m/%d/%Y %H:%M")] #create a new column with transformed date-format
+```
+
+### Analyses
+
+As a very first step of the analysis, a summary of the whole datatable will be made.
+```{r, message=FALSE, warning=FALSE}
+summary(sales) #basic function to summarise a whole dataset.
+```
+\
+The dataset includes sales data for laptops during the year 2008. The set is structured in 18 variables and contains 148,786 observations. Each observation stands for one sold item and includes the configuration of the sold laptop, the location of the customer and the store that sold the laptop, its retail price and the date of purchase.\
+Rows with NA-values will not be removed right at the beginning but in the proceeding analyses, so that rows are only ignored if they have missing values that would interfere with this particular analysis. So can be ensured, that most of values are available for each analysis.\
+
+## a) Price Questions {.tabset}
+
+### i)
+
+#### At what price are laptops actually selling?
+
+To get a first impression of how selling prices are distributed, a single boxplot will be used at measurement.
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(sales, aes(y=sales$Retail.Price)) + 
+  geom_boxplot(fill = unigecol, color = "black", outlier.colour = unigecol) +
+  labs(title="Retail Prices",x="", y = "Price in GBP") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+)
+```
+\
+This plot roughly tells that most of values (75%) are above GBP 440 and below GBP 575. The median is exactly GBP 500.\
+To get deeper insight about the distribution of prices, different plots can be used. In the following, a combination of histogram and density plot will be employed. Possible peaks, other anormalites or even skewness that a boxplot cannot reveal might become visible.\
+In addition, skewness will be calculated.\
+
+```{r, message=FALSE, warning=FALSE}
+library(ggpubr) # package for "gghistogram" and "ggdensity"
+library(cowplot) # package that enables aligning of graphs
+library(e1071) # package for skewness
+
+PricesHistogram <- gghistogram( # creating a histogram
+  sales, x = "Retail.Price", # sales is the data input, on the x-axis, there shall be the retail price
+  add = "mean", # add a vertical line on the mean
+  fill = unigecol # the bars shall be filled with the document colour
+)
+  
+PricesDensity <- ggdensity( # creating a density plot
+  sales, x = "Retail.Price", # sales is the data input, on the x-axis, there shall be the retail price
+  color = "black" # the colour of the density line shall be black
+) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05)), position = "right")  + # denotes the second y-scale for the density
+  theme_half_open(11, rel_small = 1) + # further description of the y-axis
+  rremove("x.axis") + # this and the following line: no doubled ticks, no doubled labels 
+  rremove("xlab") +
+  rremove("x.text") +
+  rremove("x.ticks") +
+  rremove("legend") +
+ggtitle(label="Overview retail price distribution") # the plot title
+
+aligned_plots <- align_plots(PricesHistogram, PricesDensity, align="hv", axis="tblr") # align plots
+ggdraw(aligned_plots[[1]]) + draw_plot(aligned_plots[[2]]) # combine plots
+```
+```{r, message=FALSE, warning=FALSE}
+skewness(sales$Retail.Price, na.rm = TRUE) # compute skewness
+```
+\
+The distribution of prices is approximately normal distributed, according to the skewness-calculation, and no severe anormalities could be detected.
+
+### ii)
+
+#### Does price change with time?
+
+\
+
+```{r, message=FALSE, warning=FALSE}
+# Preparation of values
+pricesTimes <- data.table("Price" = sales$Retail.Price, "Date" = sales$TransDate, "Month" = month(sales$TransDate)) #create a new datatable with the retail price, date and month of each bservation
+pricesTimes <- data.table(pricesTimes, "Month.Abb" = month.abb[pricesTimes$Month]) # add the abbreviated month names in a new column
+pricesTimes <- pricesTimes[complete.cases(pricesTimes),] # remove rows with missing values
+weekdaysabb = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") # set abbreviations for the weekdays for a later analysis
+```
+
+\
+To take several timeframes, from larger to smaller resolutions, the next representations will show the change of price over time.\
+The first two graphs give an overview over the whole year 2008 in a monthly resolution.\
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2) # package for plots
+PricesMonths <- sales[, mean(Retail.Price, na.rm = TRUE), by= month(TransDate)] # new datatable including the average price of every month
+PricesMonths <- data.table(PricesMonths, "Month.Abb" = "") # add new column for the month abbreviations
+PricesMonths$Month.Abb <- month.abb[PricesMonths$month] # setting the month abbreviations to the new column
+names(PricesMonths) <- c("Month", "AvgPrice", "Month.Abb") # renaming the columns
+PricesMonths <- PricesMonths[complete.cases(PricesMonths), ] # removing rows with missing values
+#PricesMonths <- PricesMonths[order(Month)]
+
+ggplotly(
+  ggplot(data=PricesMonths, aes(x=reorder(Month.Abb, Month), y=AvgPrice, group = 1)) + # new ggplot, data is the new datatable, on the x-axis there shall be the months, in the correct order
+    geom_line(color=unigecol) + # the points shall be in the uniform colour
+    geom_point(color=unigecol) + # the lines shall be in the uniform colour
+    labs(title = "Average Prices (Months, Lineplot)", x = "Month", y = "Mean price in GBP") # naming title and axis
+)
+```
+\
+According to this graph, there is a steep incline in prices from May to July from around GBP 450 to a peak in July of nearly GBP 540. After this peak, prices decrease again.
+\
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(pricesTimes, aes(x=reorder(Month.Abb, Month), y=Price)) + # new ggplot with "pricesTimes" as data, months in the correct order on the x-axis and the price on the y-axis
+      geom_boxplot(fill = unigecol, color = "black", outlier.colour = unigecol) + # stating colours for the boxplot
+      labs(title = "Average Prices (Months, Boxplot)", x = "Month", y = "Price in GBP") # creating labels of the graph
+)
+```
+
+\
+The previously described development can also be seen in this boxplot even though not as dramatic as before since right here, median and prices are shown instead of mean prices and the y-scale depicts a much larger range to cover whiskers and outliers. So, in addition to price increase in the early summer months 2008, we can also observe a sudden increase in variation of the values. In contrast to the again decreasing prices, seen in the previous graph, the higher variability and number of outliers is persistent in the following months.\
+\
+The following two graphs do the same as the two ones before, but with a weekly resolution, again, beginning with the line graph.
+
+```{r, message=FALSE, warning=FALSE}
+PricesWeeks <- sales[, mean(Retail.Price, na.rm = TRUE), by = week(TransDate)] # creating a new datatable with the weekly mean price, removing NAs
+names(PricesWeeks) <- c("Week", "AvgPrice") # renaming
+PricesWeeks <- PricesWeeks[complete.cases(PricesWeeks), ] # again removing NAs because previously, they were only removed from the retail price but not from the date-column
+PricesWeeks <- PricesWeeks[order(Week)] # ordering the data after weeks
+ggplotly( #ggplotly for interactivity
+  ggplot(data=PricesWeeks, aes(x=Week, y=AvgPrice)) + # new ggplot with "PricesWeeks" as data, the weeks on the x-axis and the mean price on the the y-axis
+    geom_line(color=unigecol) + # colour the line
+    geom_point(color=unigecol) + # colour the points
+    ggtitle("Average Prices (Weeks)") # creating a title
+)
+```
+As before, a steep increase from May to July can be observed, even though it is denoted in weeks.
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(pricesTimes, aes(x = week(pricesTimes$Date), y=Price)) + # as above
+      geom_boxplot(fill = unigecol, color = "black", outlier.colour = unigecol) + # as above, just as a boxplot
+      ggtitle("Average prices weekly resolution") + # naming the title
+      xlab("Weeks") + # label x-axis
+      coord_cartesian(xlim = c(1, 52)) # setting the limits of the x-axis in both directions
+)
+```
+\
+Also in this graph, the same insights as from the monthly graphs can be gained, just denoted in weeks.
+\
+Finally, the weekly graph is constructed differently and with a slightly different purpose. It shows a boxplot for every weekday of the week. This plot's justification is a possibly varying shopping behaviour from people during weekdays and the weekends that might have its origin in a different clientèle on different days.
+\
+
+```{r, message=FALSE, warning=FALSE}
+pricesTimes <- pricesTimes[complete.cases(pricesTimes[ , c(1:3)]),] # removing rows with missing values in the first 3 columns
+ggplotly(
+  ggplot(pricesTimes, aes(x=weekdays(pricesTimes$Date), y=Price)) + #new ggplot, data is the "pricesTimes" datatable, on the x-axis there are the weekdays, on the y-axis, there is the price
+    geom_boxplot(fill = unigecol, color = "black", outlier.colour = unigecol) + #stating the colours of the graph
+    scale_x_discrete(labels = weekdaysabb) +
+    labs(title = "Average prices (weekdays)", x = "Weekdays", y = "Price")
+)
+```
+
+\
+
+The above mentioned assumptions could not be justified by the data. No clear difference can be seen between the different days.
+
+\
+
+### iii)
+
+#### Are prices consistent across retail outlets?
+
+The pursued approach in this question is to find the mean price for every Postcode and make this visible through a standard plot.\
+```{r, message=FALSE, warning=FALSE}
+zipsPrices <- data.table("Price" = sales$Retail.Price, "Store" = sales$Store.Postcode) # new datatable with postcodes of stores and retail prices for all observations
+ggplotly( # ggplotly for interactivity
+  ggplot(zipsPrices, aes(x=Store, y=Price)) + # new ggplot with zipsPrices as data, stores on the x-axis and prices on the y-axis
+      geom_boxplot(fill = unigecol, color = "black", outlier.colour = unigecol) + # colouring the bixplots
+      labs(title = "Average Prices (Stores, Boxplot)", x = "Stores", y = "Price in GBP") + # labelling the graph
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position = "none") # flipping the names of the stores by 90 degrees to make the better readable
+)
+```
+\
+It can be observed, that there are two kinds of stores, according to price. The one group has a median price of GBP 460-470 and the other group of roughly GBP 510. To make this more obvious, the following plot will show nothing but the mean prices of the stores.
+```{r, message=FALSE, warning=FALSE}
+zipsMeanPrices <- sales[, mean(Retail.Price, na.rm = TRUE), by = Store.Postcode] # find the mean price for every store
+names(zipsMeanPrices) = c("Postcodes", "AvgPrice") # renaming
+
+# Plotting the mean prices for every store, order increasingly
+ggplotly(
+  ggplot(zipsMeanPrices, aes(x = reorder(Postcodes, AvgPrice), y = AvgPrice)) +
+    geom_point(size = 2, shape = 16, color = unigecol) +
+    ggtitle("Retail Prices and Zip-Codes") +
+    ylab("Retail price in GBP") +
+    xlab("Stores") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position="none")
+)
+```
+\
+This graph confirms the observation from above and enables a clear distinction between the 5 stores with lower average prices (mean and median, both) and the ones with higher values.
+
+### iv)
+
+#### How does price change with configuration?
+
+As in the task before, the approach is to find the mean price, here for every configuration. The result is visible by the following plot:
+```{r, message=FALSE, warning=FALSE}
+MP_Conf <- sales[,Mean_Price:=mean(Retail.Price, na.rm = TRUE), by = Configuration] # new datatable with the mean reatil price for each configuration
+ggplotly( # ggplotly for interactivity
+  ggplot(MP_Conf) + # new ggplot with MP_Conf as data
+    geom_line(aes(x = Configuration , y = Mean_Price), # linegraph with Configuration on the x-axis and mean price on the y-axis
+              na.rm = TRUE, color = unigecol, size = 0.5) + # removing NAs, seeting colour to the uniform colour
+    labs(title = "Mean Price and Configuration", y = "Price in GBP") # labelling the graph
+)
+```
+\
+The graph shows a positive relation between configuration and price, meaning the higher the configuration name, the more expensive the laptop will be on average. Nevertheless, much variation can be seen, so that for one variation, many different prices were established. In addition, it seems to be that there are 6 tubes of configuration, each one in a similar shape. The y-value (price) of these tubes slightly increases from tube to tube and with rising number of Configuration. One can also observe that the price at the lower end of a tube is far below the previous tube's end price, while the end price of one tube exceeds the one of the previous.\
+It is possible that one tube or cluster is one big group of a family of configurations and this family has a lot sub-configurations, from basic to high-end products.
+\
+
+## b) Location Questions {.tabset}
+
+### i)
+
+#### Where are the stores and customers located?
+The first visualization that will be shown here, will show the distribution of customers and stores in accordance to the British national grid coordinate system epsg code. In this step, no map will be underlying.\
+```{r, message=FALSE, warning=FALSE}
+store_size <- sales[,sum(Retail.Price, na.rm=TRUE)/1000000, by = c("Store.Postcode", "store.X", "store.Y")] # creating a new datatable including Postcode and X- and Y- variables for the stores position and getting the sum of sales for each store
+names(store_size) <- c("Store.Postcode", "store.X", "store.Y", "Sales in Mio") # renaming
+
+ggplot() +
+  geom_point(aes(x = sales$customer.X, y = sales$customer.Y, color = "Customers")) + # 1. scatterplot with x- coordinate on the x-axis and corresponding for y (for customers), data are directly taken from the sales datatable, the points shall be coloured homogenously for all customers to differentiate customers from stores, the same applies for stores
+  geom_point(aes(x = store_size$store.X, y = store_size$store.Y, size = store_size$`Sales in Mio`, color = "Stores")) + # 2. datatable (for stores), set size corresponding to the previous calculated sales volume for each shop
+ labs(title = "Distribution of Customers and Stores", size = "Sales in Mio", col = "Type", x = "x-value", y = "y-value") # labelling the plot
+```
+\
+Since there is no underlying map yet, the X- and Y- data of stores and customers will be transformed into coordinates and then printed into a "real" map. Since the same data are used, just in a different way, the results will remain the same.
+
+```{r, message=FALSE, warning=FALSE}
+
+library(ggmap)    # maps visualizations
+library(osmdata)  # open street maps
+library(sp)       # spatial data
+library(rgdal)    # needed for transformation of data
+library(tidyverse)     # needed for data-handling
+library(OpenStreetMap) # package need for the map itself
+library(geosphere)     # needed for distance-calculation
+
+customers_locations <- na.omit(unique(sales[, c("Store.Postcode", "customer.X", "customer.Y")])) # setting up a datatable where each customers only appears once, including postcode and the X- and Y-variable
+stores_locations <- na.omit(unique(sales[, c("Store.Postcode", "store.X", "store.Y")])) # as above
+
+# Create SpatialPointsDataframe
+customers_locations_SP <- SpatialPointsDataFrame( 
+  data = data.frame(customers_locations$Store.Postcode),    # data, stores names (postcodes)
+  customers_locations[, c("customer.X", "customer.Y")],           # coordinates, x for "Easting", y for "Northing"
+  proj4string = CRS( "+init=epsg:27700" ) )  
+
+stores_locations_SP <- SpatialPointsDataFrame( 
+  data = data.frame(stores_locations$Store.Postcode),    # data, stores names (postcodes)
+  stores_locations[, c("store.X", "store.Y")],           # coordinates, x for "Easting", y for "Northing"
+  proj4string = CRS( "+init=epsg:27700" ) )              # proj4string of the coordinates, assign CRS to data
+
+# Transform coordinates
+customers_locations_SP_LL <- spTransform(customers_locations_SP, CRS("+init=epsg:4326"))
+stores_locations_SP_LL <- spTransform(stores_locations_SP, CRS("+init=epsg:4326"))
+
+# Transform to dataframe
+customers_locations_LL <- data.frame(customers_locations_SP_LL)[, c(1:3)]      # keep first 3 columns
+customers_locations_LL <- cbind("Type"="Customer", customers_locations_LL) # label customers as those by adding a new column using cbind
+colnames(customers_locations_LL) <- c("Type", "Customers.Postcode", "Customers.Longitude","Customers.Latitude") # renaming
+
+stores_locations_LL <- data.frame(stores_locations_SP_LL)[,c(1:3)]      # keep first 3 columns
+stores_locations_LL <- cbind("Type"="Store", stores_locations_LL) # as above
+colnames(stores_locations_LL) <- c("Type", "Store.Postcode", "Store.Longitude","Store.Latitude")    # rename stores variables
+
+#stores_customers_LL <- rbind(stores_locations_LL, customers_locations_LL)
+stores_sales <- sales[, sum(Retail.Price, na.rm = TRUE), by = Store.Postcode] # new datatable, calculating again the sales of the stores
+names(stores_sales) <- c("Store.Postcode", "Sales") # renaming
+stores_locations_LL <- merge(stores_locations_LL, stores_sales, by= "Store.Postcode") # merge both datatables
+
+london <- get_map(getbb("London"), source = "osm") # create map london, where the stores are located
+
+ggmap(london) +
+  geom_point(data=customers_locations_LL,aes(x = Customers.Longitude, y = Customers.Latitude, colour = "Customers")) + # 1. scatterplot for customers
+  geom_point(data = stores_locations_LL,aes(x = Store.Longitude, y = Store.Latitude, colour = "Stores", size = Sales/1000000)) + # 2. scatterplot for stores
+  labs(title = "Distribution of customers and stores", x = "Longitude", y = "Latitude", size = "Sales in Mio",col = "Type") # labelling the plot
+```
+\
+In both plots, one can see that the highest density of customers is in the center. From the second plot one can learn that the center of customers is located in the center of London. Further away from this center, the density declines. The stores are more distracted here, and the ones with the highest revenue are located in the center. The bigger the distance from the center, the smaller the revenue.
+
+\
+
+### ii)
+
+#### Which stores are selling the most?
+```{r, message=FALSE, warning=FALSE}
+stores_sales_cumulative <- sales[,sum(Retail.Price, na.rm = TRUE), by = Store.Postcode]
+names(stores_sales_cumulative) <- c("Store.Postcode", "Sales")
+stores_sales_cumulative <- stores_sales_cumulative[order(-Sales)]
+stores_sales_cumulative <- data.table(stores_sales_cumulative, cumsum(stores_sales_cumulative$Sales))
+names(stores_sales_cumulative) <- c("Store.Postcode", "Sales", "Sum_of_sales")
+
+ggplotly(
+  ggplot(stores_sales_cumulative,aes(x=reorder(Store.Postcode, -Sales))) +
+      geom_bar(aes(y = stores_sales_cumulative$Sales/1000000), fill = unigecol, stat = "identity") +
+      geom_line(aes(y = stores_sales_cumulative$Sum_of_sales/1000000, group = 1)) +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position="none") +
+      labs(title = "Sales by stores", x = "Stores", y = "Sum of sales in Mio GBP")
+)
+```
+This Pareto-Chart shows how the single stores distributed with their sales to the overall sales. The maximum value is roughly GBP 12 Mio and the minimum GBP 40.000, so there is a large variety in revenue.
+\
+According to the sales number, the following table delivers information.
+```{r, message=FALSE, warning=FALSE}
+num_sales <- sales[,.N, by = sales$Store.Postcode] # counting the number of sales per store
+num_sales <- num_sales[order(-N),] # order the data decreasingly by the number
+names(num_sales) <- c("Store", "Number of sales") # renaming
+DT::datatable(num_sales) # table outplut
+```
+The order of the contribution of the shops to the overall sales number stays exactly the same as in the diagram above. Therefore, one can conclude that sales number and revenue are strongly positively correlated, what was to expect.
+\
+The precise number is the following.
+```{r, message=FALSE, warning=FALSE}
+cor(num_sales$N, stores_sales_cumulative$Sales) # correlation between revenue and number of sales
+```
+
+### iii)
+
+#### How far would customers travel to buy a laptop?
+
+It is important to understand, how far customers are travelling to the stores, so in this abstract the shortest connection between a customer and a store (euclidean distance) will be calculated.
+```{r, message=FALSE, warning=FALSE}
+# new datatable with the location data and some additional data for all observations
+distances <- data.table("customer.Postcode" = sales$Customer.Postcode,
+                        "Date" = sales$TransDate,
+                        "customer.X" = sales$customer.X,
+                        "customer.Y" = sales$customer.Y,
+                        "store.Postcode" = sales$Store.Postcode,
+                        "store.X" = sales$store.X,
+                        "store.Y" = sales$store.Y
+                        ) 
+
+distances <- distances[complete.cases(distances),] # only complete cases
+
+# splitting of customers and stores
+customers_locations <- distances[, c("customer.Postcode", "customer.X", "customer.Y")]
+stores_locations <- distances[, c("store.Postcode", "store.X", "store.Y")]
+
+# Create SpatialPointsDataframe
+customers_locations_SP <- SpatialPointsDataFrame( 
+  data = data.frame(customers_locations$customer.Postcode),    # data as a dataframe, stores names (postcodes)
+  customers_locations[, c("customer.X", "customer.Y")],        #  X and Y coordinates for stores, x for "Easting", y for "Northing"
+  proj4string = CRS( "+init=epsg:27700" ) )  
+
+stores_locations_SP <- SpatialPointsDataFrame( 
+  data = data.frame(stores_locations$store.Postcode),    # data as a dataframe, stores names (postcodes)
+  stores_locations[, c("store.X", "store.Y")],           # X and Y coordinates for stores, x for "Easting", y for "Northing"
+  proj4string = CRS( "+init=epsg:27700" ) )              # proj4string of the coordinates, assign CRS to data
+
+# Transform coordinates
+customers_locations_SP_LL <- spTransform(customers_locations_SP, CRS("+init=epsg:4326"))
+stores_locations_SP_LL <- spTransform(stores_locations_SP, CRS("+init=epsg:4326"))
+
+# Transform to dataframe
+customers_locations_LL <- data.frame(customers_locations_SP_LL)[,c(1:3)]      # keep first 3 columns
+colnames(customers_locations_LL) <- c("Customer.Postcode", "Customer.Longitude", "Customer.Latitude") # rename customer variables
+
+stores_locations_LL <- data.frame(stores_locations_SP_LL)[,c(1:3)]      # keep first 3 columns
+colnames(stores_locations_LL) <- c("Store.Postcode", "Store.Longitude", "Store.Latitude")    # rename stores variables
+
+distances <- data.table(customers_locations_LL, stores_locations_LL, "Date" = distances$Date, "Month" = month(distances$Date), "Month.Abb" = month.abb[distances$Date]) # create a new datatable by combining the customers locations and stores locations datatable and adding a new column for the distance
+
+distances$dist <- distHaversine(distances[,c(2,3)], distances[,c(5,6)]) # using distHaversine, it is possible to calculate the distance between 2 coordinates in meter. The outcome is the euclidean distance.
+distances$Month.Abb <- month.abb[distances$Month] # adding month abbreviations to the distances datatable
+```
+
+Now, since the distances for all sales are calculated, a boxplot can give an overview about the distances travelled.
+```{r, message=FALSE, warning=FALSE}
+#Plotting all distances in a boxplot
+ggplotly(
+  ggplot(data = distances, aes(y = (distances$dist/1000))) +
+    geom_boxplot(fill = unigecol, outlier.colour = unigecol) +
+    labs(title = "Travelled distances", x = "", y = "Distance in km") +
+    theme(axis.text.x=element_blank(),
+          axis.ticks.x=element_blank())
+)
+```
+\
+One can see that the travelled distance to buy a laptop was in the central 75 % of the cases between 2.4 km and 4.3 km.\
+As in a) i) possible anormalities that the boxplot cannot show might become visible in a density/bar plot.
+Reusing the graph from a) i) leads to the following result.
+```{r, message=FALSE, warning=FALSE}
+distances$km <- distances$dist/1000
+  DistanceHistogram <- gghistogram( # creating a histogram
+    distances, x = "km", # distances is the data input, on the x-axis, there shall be the retail price
+    add = "mean", # add a vertical line on the mean
+    fill = unigecol # the bars shall be filled with the document colour
+  )
+  
+  DistanceDensity <- ggdensity( # creating a density plot
+    distances, x = "km", # distances is the data input, on the x-axis, there shall be the retail price
+    color = "black" # the colour of the density line shall be black
+  ) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.05)), position = "right")  + # denotes the second y-scale for the density
+    theme_half_open(11, rel_small = 1) + # further description of the y-axis
+    rremove("x.axis") + # this and the following line: no doubled ticks, no doubled labels 
+    rremove("xlab") +
+    rremove("x.text") +
+    rremove("x.ticks") +
+    rremove("legend") +
+  labs(title = "Distance distribution") # the plot title
+  
+  aligned_plots <- align_plots(DistanceHistogram, DistanceDensity, align="hv", axis = "tblr") # align plots
+  ggdraw(aligned_plots[[1]]) + draw_plot(aligned_plots[[2]]) # combine plots
+```
+```{r, message=FALSE, warning=FALSE}
+skewness(distances$dist)
+```
+```{r, message=FALSE, warning=FALSE}
+median(distances$km)
+```
+
+The distribution of distances is strong and positively skewed. That makes sense because a travelled distance is limited on the left side by 0 since one cannot travel less than 0 km to a store but there is basically no upper limit for the distance. Nevertheless, a median of about 3.4 km can be observed (which is pretty close to the left border of 0).\
+It is to consider that the density does not become negative but the y-axes have a different level of 0.
+
+### iv)
+
+#### Try an alternative way of looking at how far customers traveled. Do this by creating a new column that computes the distance between customer and store.
+
+Doing so, the data from iii) are used and the computation will not be repeated for this task.\
+An alternative way to think about how far customers would travel to buy a laptop is to look at the data under another aspect. It might be useful here, to examine the travelled distance in regard to the store customers went. It seems possible that we could observe significant differences and outlying stores.
+
+```{r, message=FALSE, warning=FALSE}
+ggplotly(
+  ggplot(distances, aes(x = distances$Store.Postcode, y = dist/1000)) + # new ggplot, data is the previously created datatable distances, the x-axis represents the store (postcode), the y-axis the distance in km
+    geom_boxplot(fill = unigecol) + # colouring the boxplot
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position="none") + #adjusting legend and orientation
+    labs(title = "Stores and the distances travelled to them", x = "Stores", y = "Distance in km") # labelling
+)
+```
+\
+Unfortunately, it was not possible to find clearly outlying stores in terms of distance travelled to them, even though there are differences observable. Following statements can be made:\
+Customers normally don't travel more than 10 km, no matter of which store they are going to. Nevertheless, outliers appear up to 20 km. When looking at these numbers, it is important to keep in mind that these distances are direct, straight connections, so in most cases, the distances are underestimated.
+
+## c) Revenue Questions {.tabset}
+
+### i)
+
+#### How do the sales volumes in each store relate to Acell's revenues?
+```{r, message=FALSE, warning=FALSE}
+rev <- sales[,sum(Retail.Price, na.rm = TRUE), by = Store.Postcode] # new datatable with the sales for each store
+  colnames(rev) <- c("Postcode","Revenue in Mio GBP") # renaming
+  rev <- rev[order(`Revenue in Mio GBP`/1000000),] # ordering by revenue (sales)
+  
+ggplot(rev, aes(fill = Postcode, y=`Revenue in Mio GBP`, x = 1, order = -as.numeric(`Revenue in Mio GBP`))) + # new ggplot with data from the previously created datatable
+    geom_bar(position ='stack', stat="identity") + # setting the position to stack 
+    labs(title = "Contribution of stores \n to overall revenue", x = "") + # labelling
+    theme(axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()) # no x-axis-labels
+```
+\
+This graph tells that there are about three stores that have the largest sales, namely SW1V 4QQ, SW1P 3AU and SE1 2BN. Unfortunately, it is not very clear, so creating a treemap might solve this problem.
+```{r, message=FALSE, warning=FALSE}
+library(treemapify) # package for treemaps
+names(rev) <- c("Store.Postcode", "Revenue") # renaming
+
+#assigning new variables to create a treemap
+Store.Postcode <- rev$Store.Postcode
+value <- rev$Revenue
+subgroup <- rev$Store.Postcode
+
+ggplot(rev, aes(area = value, label = subgroup, fill = Store.Postcode)) + # new ggplot with the previously created datatable
+  geom_treemap(color = "white") + # colouring
+  geom_treemap_text(color = "white", grow = TRUE) # colouring
+```
+\
+The result stays the same but is presented more clearly.
+
+### ii)
+
+#### How does the relationship depend on the configuration?
+
+```{r, message=FALSE, warning=FALSE}
+# The same approach as for the treemap of stores and sales is now pursued but for the configuration, so I will not further comment on it.
+rev <- sales[, sum(Retail.Price, na.rm = TRUE), by = Configuration] # new datatable with the revenue for each configuration
+colnames(rev) <- c("Configuration","Revenue") # renaming
+rev <- rev[order(Revenue), ] # reodering
+
+# setting/preparing data for the treemap
+group <- rev$Configuration
+value <- rev$Revenue
+store_contribution <- data.frame(group, value)
+
+#plotting the treemap
+ggplot(store_contribution, aes(area = value, fill = group)) + # area refers to the sales volume and group is the respective Configuration number
+  geom_treemap(color = "white") + # the in-between line4s shall be white
+  labs(title = "Contribution of configurations to the overall sales", fill = "Configuration") # title and optics
+```
+\
+Unfortunately, the amount 864 configuration makes it difficult to learn a lot from this graph but it is basically not possible to find a way of representation where the reader learns about 864 values the same time.\
+Nevertheless, it can be seen, that the contrasts in color are much stronger in the upper-right corner, the corner, where the fields representing the sales of one configuration are smaller. So, the more extreme the value of a configuration is, the less smaller its revenue. Looking even closer, one can see that in the abolute corner, rather dark colours dominate, referring to small configurations, while rather in the center-stripe, there is a big brighter strip, representing higher configurations. medium colours are in the down-left corner, representing medium configurations. Remembering the previous insight that the higher a configuration number is, the more expensive (on average) the laptop will be. Applying this to the current graph, it says, that medium priced laptops (with medium configuration) account for larger sales than those with a high price (high configuration, most probably top-end models) and their revenue, again, exceed the one of cheap laptops (low configuration, most probably basic models). This makes sense because most people are "average"-users, so the demand for those laptops and therefore revenue will be higher with them. Special configurations (higher and smaller configuration, both) do not sell as good as the medium ones.\
+
+## d) Configuration questions {.tabset}
+
+### i) 1)
+
+#### What are the details of each configuration?
+```{r, message=FALSE, warning=FALSE}
+library(dplyr) # for piping values
+library(DT) # for datatable representation
+
+# creating a new datatable that contains all information about each configuration, data are directly taken from sales
+# finally summing up the number of laptops sold for each configuration
+conf_comp <- sales %>%
+  group_by(Configuration,
+           "Screen Size in Inches" = Screen.Size..Inches.,
+           "Battery life in h" = Battery.Life..Hours.,
+           "RAM in GB" = RAM..GB.,
+           "Processor speed in GHz" = Processor.Speeds..GHz.,
+           "Integrated Wireless feature" = Integrated.Wireless.,
+           "Memory in GB" = HD.Size..GB.,
+           "Bundled Applications" = Bundled.Applications.) %>%
+  summarise("Number of sold Laptops with same configuration" = n())
+
+DT::datatable(conf_comp) # showing the table in a clean and complete way
+```
+\
+When ordering the table following configuration, it becomes visible, that the lower the configuration number is, the weaker the characteristics get.
+
+### i) 2)
+
+#### How does this relate to price?
+Replotting graph from a) iv) in a slightly changed way shows the relation between configuration and price.
+```{r, message=FALSE, warning=FALSE}
+PrCo <- sales[order(Configuration), mean(Retail.Price, na.rm=TRUE), by = Configuration] # new datatable with the mean retail price of each configuration, ordered by configuration
+names(PrCo) <- c("Configuration", "Mean_Price_in_GBP") # renaming
+
+# plotting the same graph as above
+ggplotly(
+  ggplot(PrCo) +
+    geom_point(aes(x = Configuration, y = Mean_Price_in_GBP), na.rm = TRUE, color = unigecol) + 
+                              labs(title = "Mean Price and Configuration", y = "Mean Price in GBP") +
+    geom_smooth(method = lm, aes(Configuration, Mean_Price_in_GBP), se = FALSE, color = "black")
+)
+```
+\
+The higher the configuration, the higher the price will be. As in a) iv) already described, we can see that the rise in prices goes in clusters that are similarly shaped.
+
+```{r, message=FALSE, warning=FALSE}
+PrCo$Mean_Price_in_GBP <- round(PrCo$Mean_Price_in_GBP, digits = 2) # rounding values to the 2. digit
+DT::datatable(PrCo) # showing the data
+```
+\
+The same result as described above can be drawn from the table as well.
+\
+
+### ii)
+
+#### Do all stores sell all configurations?
+There are several approaches how this question can be solved. The first one presented is based on aggregation function on columns and rows.\
+```{r, message=FALSE, warning=FALSE}
+numTable <- sales[,.N,by=c("Store.Postcode", "Configuration")] # creating a new table by aggregating the number of items per store and configuration
+numTable <- numTable[, .N, by = Store.Postcode] # aggregating again, by store
+numTable <- numTable[order(N),] # reordering
+names(numTable) <- c("Store_Postcode", "Number") # renaming
+```
+\
+The second approach is by the help of a loop, in this case a for-loop.
+```{r, message=FALSE, warning=FALSE}
+library(janitor) # needed for function tabyl
+#library(sqldf)
+medAggDat <- data.table(tabyl(sales[,c(3,5)],  Configuration, Store.Postcode)) # creating a table the shows the number of each configuration sold by each store
+
+# preparing tables and values for the loop
+loopTable <- data.table("Store_Postcode" = "0", "Number" = integer(16))
+counter = 0
+numConfigurations <- nrow(medAggDat)
+numStores <- length(medAggDat)
+
+for (i in 2:17){ #goes through all columns/stores
+  for (j in 1:numConfigurations){ # goes through all rows/configurations
+    if (medAggDat[j,..i]<1){ #if a shop sold 0 of one -> configuration,
+      counter = counter + 1 # -> that will be counted ->
+    }
+  }
+  loopTable[i-1,1] = colnames(medAggDat)[i] # renaming columns
+  loopTable[i-1,2] = 864 - counter # -> and here deducted
+  counter = 0 # reset counter for the next column/store
+}
+
+compTable <- data.table(merge(loopTable, numTable, by = "Store_Postcode"),"Match"="") # merge resulting tables from both ways
+names(compTable) <- c("Store_Postcode", "Num_Agg", "Num_Loop", "Match") # renaming
+compTable$Match <- compTable$Num_Agg == compTable$Num_Loop # the result of comparison of both tables' results shall be displayed in the new column
+compTable <- compTable[order(Num_Agg),] # reordering
+DT::datatable(compTable) # display the data
+```
+\
+The data displayed are the number of configurations that were actually sold by one store.\
+All the data are matching, both approaches led to the same result.\
+Only 4 stores sold all configurations, most of the rest ranges between 648 and 863. Only one store (S1P 3AU) sold much less, only 80 configurations.
