@@ -1,0 +1,656 @@
+---
+title: "Report Fraud Prediction"
+author: "Hannes Guth"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Project report {.tabset}
+
+## Data reading and preparation
+
+At first, the libraries that will be needed throughout the document are loaded.
+```{r, message=FALSE, warning=FALSE}
+library(data.table) # package to handle data tables
+library(caret) 
+library(neuralnet) # used to run neural networks
+library(compiler) # used to compile functions to save computational time
+library(dplyr) # used for the pipe operator
+library(rpart) # used for running regression trees
+library(NeuralNetTools)
+library(ggplot2) # used to produce different visualizations
+library(randomForest) # used to run random forests
+library(pROC)
+library(caTools)
+library(ROCR)
+library(knitr) # used to show tables
+```
+
+In this section, the data that were previously prepared in Python will be loaded as data tables. 6 files will be loaded, one test set, one training set and one validation set. Since the isFraud-information is stored as an extra column for each set, these information will also be loaded.
+```{r, message=FALSE, warning=FALSE}
+setwd("D:/Dokumente/Studium/Master/Université de Genève/Kurse/Creating Value Through Data Mining/Project/Daten") # set the working directory
+
+freadFast <- cmpfun(fread) # compile fread
+
+# read the datasets that were previously prepared in python
+testx <- fread("x_group_main_types_test.csv")
+trainx <- fread("x_group_main_types_train.csv")
+validationx <- fread("x_group_main_types_validation.csv")
+testy <- fread("y_group_main_types_test.csv")
+trainy <- fread("y_group_main_types_train.csv")
+validationy <- fread("y_group_main_types_validation.csv")
+```
+
+Since, only 8 variables will be kept these are first set. Then the datasets will be reduced to these 8 columns and also merged with the isFraud outcome column.
+```{r, message=FALSE, warning=FALSE}
+# set the most important 8 variables
+top8 <- c('oldbalanceOrg',
+          'step',
+          'std_amount',
+          'std_oldbalanceOrg',
+          'std_oldbalanceDest',
+          'amount_is_equal_to_balance',
+          'newbalanceDest',
+          'debt',
+          'isFraud')
+
+# merge the data with their Fraud/non-fraud observations and only keep the important variables in the sets
+test <- data.table(testx, testy)[, ..top8]
+train <- data.table(trainx, trainy)[, ..top8]
+validation <- data.table(validationx, validationy)[, ..top8]
+
+# remove the datasets that were initially loaded
+rm(testx, testy, validationx, validationy, trainx, trainy)
+
+# convert the isFraud column to factors
+test$isFraud <- as.factor(test$isFraud)
+train$isFraud <- as.factor(train$isFraud)
+validation$isFraud <- as.factor(validation$isFraud)
+
+# Sample training set again because some parts cannot be executed with the whole training set due to computational time
+
+# create a random sample
+set.seed(1) # reproducibility
+randTrainSmall = sample(seq_len(nrow(train)), size = 0.003*nrow(train)) # get approximately 4,000 random indices from the training set
+randTrainSmall = train[randTrainSmall,] # get the values corresponding to these indices
+
+# create a balanced sample
+trainSmall <- as.data.table(train %>% # from the train data
+  group_by(isFraud) %>% # the column that shall be grouped by is isFraud
+  sample_n(size=as.integer(train[,.N,by=isFraud][1,2])/2)) # it shall take half of the fraud observations and exactly so many non fraud observations
+```
+
+## Baseline models
+
+In this paragraph, the baseline models will be calculated and their performances evaluated.
+```{r, message=FALSE, warning=FALSE}
+# nothing is Fraud
+confusionMatrix(as.factor(integer(nrow(test))), test$isFraud, positive = "1")
+
+# everything is Fraud
+confusionMatrix(as.factor(rep(1, nrow(test))), test$isFraud, positive = "1")
+
+# if amount is equal to balance, than it is fraud
+amountEquToBalance <- as.factor(ifelse(test$amount_is_equal_to_balance > 0, 1, 0))
+confusionMatrix(amountEquToBalance, test$isFraud, positive = "1")
+```
+An interpretation will be given in the report.
+
+## Logistic Model
+
+The model will be run with default values and on the whole training set.
+```{r, message=FALSE, warning=FALSE}
+glmFast <- cmpfun(glm)
+logistic_model <- glmFast(isFraud ~ ., data = train, family = "binomial") # create the logistic model
+
+# Calculate the accuracy of the logistics regression model
+log_predict <- predict(logistic_model, test, type = "response")
+
+# 1. draw classification from the probabilities with a cutoff value of 0.5
+log_predict <- ifelse(log_predict > 0.5, 1,0)
+
+# 2. Evaluating the model performance
+confusionMatrix(as.factor(test$isFraud), as.factor(log_predict))
+
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+Values <- c(554254, 8, 1636, 2) # set the number of values accordingly
+Fill <- c(2,0.5,1,0) # create a vector for later colorization
+data <- data.frame(True, Predicted, Values) # combine the created vectors
+
+# Confusion matrix for the logistic model
+ggplot(data = data, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = Fill), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", Values)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix for the logistic regression") # set the plot title
+```
+
+```{r, message=FALSE, warning=FALSE}
+importance <- varImp(logistic_model) # get the variable importance of the logistic model
+importance$features <- row.names(importance) # get the rownames
+
+ggplot(importance) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, -Overall), y = Overall), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"), # set the background color to white
+        axis.line = element_line(color = "black"), # set the line color to black
+        axis.text = element_text(size = 12), # set the axis text size to 12
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance logistic regression model", # set white background
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+```
+
+## Classification Tree {.tabset}
+
+### Finding the optimal maxdepth and cp
+
+In this first section, a similar approach as for the neural networks will be done. Since it would be arbitrary to just set maxdepth and cp, the best combination will be searched by comparing the performance of trees with different combinations of these two variables on the two training datasets.
+```{r, message=FALSE, warning=FALSE}
+treeCompute <- cmpfun(rpart) # compile the rpart function
+predictFast <- cmpfun(predict) # compile the predict function
+
+la = 25 # set the length to 25 because 5 variations in maxdepth x 5 variation in cp
+
+# create an empty performance table
+performance <- data.table("maxdepth" = integer(la),
+                          "cp" = numeric(la),
+                          "SensitivityBalanced" = numeric(la),
+                          "SensitivityRandom" = numeric(la),
+                          "SpecificityBalanced" = numeric(la),
+                          "SpecificityRandom" = numeric(la),
+                          "AccuracyBalanced" = numeric(la),
+                          "AccuracyRandom" = numeric(la))
+
+# create an empty results table
+results <- data.table("Balanced" = numeric(nrow(test)),
+                      "Random" = numeric(nrow(test)),
+                      "True" = as.factor(test$isFraud))
+
+options(scipen=999) # avoid scientific notation
+counter = 0 # set the counter variable to 0
+
+# go through "all" possible variations of maxdepth and cp
+for (i in 1:5){ # got through all maxdepth levels
+  cp = 1 # start everytime with cp = 1
+  for (j in 1:5){ # go through all cp levels
+    print(paste("i", i))
+    print(paste("j", j))
+    counter = counter + 1 # increase counter by 1
+    cp = cp/10 # calculate a new cp-value
+    set.seed(1) # reproducibility
+    treeBalanced <- treeCompute(isFraud ~ ., data = trainSmall, method = "class", control = rpart.control(maxdepth = i, minbucket = 1, cp = cp)) # calculate the tree for the balanced training sample
+    set.seed(1) # reproducibility
+    treeRandom <- treeCompute(isFraud ~ ., data = randTrainSmall, method = "class", control = rpart.control(maxdepth = i, minbucket = 1, cp = cp)) # calculate the tree for the random training sample
+    set.seed(1) # reproducibility
+    results$Balanced <- predictFast(treeBalanced, test, type = 'class') # predict the results for the "balanced" tree for the test set
+    results$Random <- predictFast(treeRandom, test, type = 'class') # predict the results for the "random" tree for the test set
+    print("-")
+    performance[counter, 1] = i # insert the current value of the maxdepth level
+    performance[counter, 2] = round(cp, 5) # insert the current value of the cp level
+    performance[counter, 3] = sensitivity(as.factor(results$Balanced), as.factor(results$True)) # calculate the sensitivity for the "balanced" tree
+    performance[counter, 4] = sensitivity(as.factor(results$Random), as.factor(results$True)) # calculate the sensitivity for the "random" tree
+    performance[counter, 5] = specificity(as.factor(results$Balanced), as.factor(results$True)) # calculate the specificity for the "balanced" tree
+    performance[counter, 6] = specificity(as.factor(results$Random), as.factor(results$True)) # calculate the specificity for the "random" tree
+    print("-")
+    performance[counter,7] <- confusionMatrix(results$Balanced, results$True, positive = "1")$overall[1] # calculate the accuracy for the "balanced" tree
+    performance[counter,8] <- confusionMatrix(results$Random, results$True, positive = "1")$overall[1] # calculate the accuracy for the "random" tree
+  }
+}
+
+performance <- performance[order(-SensitivityBalanced),] # reorder it by SensitivityRandom
+max(performance$SpecificityBalanced) # return the maximum value of the specificity for the "balanced" predictions
+kable(performance) # show the performance table
+```
+
+### Applying the best combination
+
+For the big classification tree, the combination of maxdepth = 2 and cp = 0.01 is selected because SensitivityBalanced is very close to 1 and SensitivityRandom is 1 and SpecificityBalanced is the maximum achievable. SpecificityRandom does not change at all.
+
+```{r, message=FALSE, warning=FALSE}
+tree <- treeCompute(isFraud ~ ., data = train, method = "class", control = rpart.control(maxdepth = 2, minbucket = 1, cp = 0.01)) # calculate the tree with the complete training set and the selected rpart.control values from above
+
+# create the results table with predictions for the validation set and the true values
+results <- data.table("Prediction" = predictFast(tree, test, type = 'class'),
+                      "True" = as.factor(test$isFraud))
+```
+
+### Plotting the results
+
+In the following, the performance will be evaluated, using a confusion matrix. This matrix will be generated in 2 ways.
+```{r, message=FALSE, warning=FALSE}
+confusionMatrix(results$True, results$Prediction, positive = "1") # show the confusion matrix
+
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+Values <- c(554254, 6, 1638, 2) # set the number of values accordingly
+Fill <- c(2,0.5,1,0) # create a vector for later colorization
+data <- data.frame(True, Predicted, Values) # combine the created vectors
+
+# Confusion matrix for the classification tree
+ggplot(data = data, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = Fill), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", Values)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix for the classification tree") # set the plot title
+```
+
+Now, the variable importance plot will be generated.
+```{r, message=FALSE, warning=FALSE}
+importance <- varImp(tree) # getting variable importances
+importance$features <- row.names(importance) # getting rownames as an extra column
+
+ggplot(importance) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, -Overall), y = Overall), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"), # set a white background
+        axis.line = element_line(color = "black"), # set the line color to black
+        axis.text = element_text(size = 12), # set the ext size to 12
+        plot.title = element_text(size = 16, face = "bold")) + # set the size of the title
+  labs(title = "Variable importance classification tree", # set the title
+       x = "", # set empty x-axis title
+       y = "Importance") # set the y-axis title
+```
+
+## Random Forest
+
+### Running two models
+
+In this part, the method "random Forest" will be applied to the dataset. Due to computational time, the model will only be trained on the the two small training samples and evaluated with the validation set. All values for the randomForest function will be kept at default.
+
+```{r, message=FALSE, warning=FALSE}
+rndForest <- cmpfun(randomForest) # make the randomForest function faster
+randForest <- rndForest(isFraud ~ ., data = randTrainSmall) # run with the random sample
+BalancedForest <- rndForest(isFraud ~ ., data = trainSmall) # run with the balanced set
+randPrediction <- predict(randForest, test) # predict with the "random" tree the data for the validation set
+BalancedPrediction <- predict(BalancedForest, test) # predict with the "balanced" tree the data for the validation set
+confusionMatrix(randPrediction, test$isFraud, positive = "1") # show the confusion matrix for the "random" prediction
+confusionMatrix(BalancedPrediction, test$isFraud, positive = "1") # show the confusion matrix for the "balanced" prediction
+```
+
+### Presenting the results
+
+The random forest with from the random sample makes by far less mistakes, but has a lower sensitivity. This will be further assessed in the report. For visual reasons, the confusion matrices will be recreated here.
+```{r, message=FALSE, warning=FALSE}
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+ValuesRandom <- c(554256, 0, 1607, 37) # set the number of values accordingly
+ValuesBalanced <- c(554119, 136, 1638, 6) # set the number of values accordingly
+FillRandom <- c(2,0,1,0.5) # create a vector for later colorization for the "random" tree
+FillBalanced <- c(2,0.5,1,0) # create a vector for later colorization for the "balanced" tree
+dataRandom <- data.frame(True, Predicted, ValuesRandom) # combine the created vectors for the "random" tree
+dataBalanced <- data.frame(True, Predicted, ValuesBalanced) # combine the created vectors for the "balanced" tree
+
+# Confusion matrix for the random forest generated from the random sample
+ggplot(data = dataRandom, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = FillRandom), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", ValuesRandom)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix random forest (random sample)") # set the plot title
+
+# Confusion matrix for the balanced forest generated from the random sample
+ggplot(data = dataBalanced, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = FillBalanced), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", ValuesBalanced)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix random forest (balanced sample)") # set the plot title
+```
+
+In the following, the barplot for the variable importance for both models will be plotted.
+```{r, message=FALSE, warning=FALSE}
+importanceBalanced <- varImp(BalancedForest) # get the variable importance of the balanced forest
+importanceBalanced$features <- row.names(importance) # get the rownames
+
+importanceRandom <- varImp(randForest) # get the variable importance of the random forest
+importanceRandom$features <- row.names(importance) # get the rownames
+
+ggplot(importanceBalanced) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, -Overall), y = Overall), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"),
+        axis.line=element_line(color="black"),
+        axis.text = element_text(size = 12),
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance random forest (balanced sample)", # set white background
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+
+ggplot(importanceRandom) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, -Overall), y = Overall), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"),
+        axis.line = element_line(color="black"),
+        axis.text = element_text(size = 12),
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance random forest (random sample)", # set white background
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+```
+
+
+
+## Neural Network {.tabset}
+
+### Finding the optimal combination of layers and nodes
+
+In this first step, the optimal combination of layers and nodes shall be found, therefore different combinations of nodes and layers of up to 9 layers, containing 9 nodes will be evaluated for the both of the "small" training sets to later on apply a network with these characteristics to the "real" training set. This avoids arbitrarily choosing a combination.
+```{r, message=FALSE, warning=FALSE}
+la <- 81 # set the length to 81 (initially 100, but due to computational time, only 81 what allows all combination with 9 nodes and 9 hidden layers)
+
+# create a data table to store the performance values (sensitivity, specificity, accuracy) for the single combinations of nodes and layers
+performance <- data.table("Layers" = numeric(la),
+                          "Nodes" = numeric(la),
+                          "SensitivityBalanced" = numeric(la),
+                          "SensitivityRandom" = numeric(la),
+                          "SpecificityBalanced" = numeric(la),
+                          "SpecificityRandom" = numeric(la),
+                          "AccuracyBalanced" = numeric(la),
+                          "AccuracyRandom" = numeric(la))
+
+results <- data.table("PredictionBalanced" = as.factor(0), "PredictionRandom" = as.factor(0), "True" = validation[,9]) # create a table for the predictions and real outcomes of the test set
+
+# compile functions to save computational time
+newNeuralNetwork <- cmpfun(neuralnet) # compile the function "neuralnet"
+comp <- cmpfun(neuralnet::compute) # compile the function compute from neuralnet
+
+# The 2 loops go though all combinations of layers and nodes, calculate the respective neural network and evaluate its performance with the test set
+
+for (j in 1:9){ # go through all layers
+  for (i in 1:9){ # go through all nodes
+    performance[(j-1)*9+i,1] = j # assign the number of layers
+    performance[(j-1)*9+i,2] = i # assign the number of nodes
+    print(paste("i:", i))
+    print(paste("j:", j))
+    if (j == 1){
+      # calculate the neural networks for the current combination of nodes per layer i and 1 hidden layer for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = i, linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = i, linear.output = FALSE)
+    }
+    if (j == 2){
+      # calculate the neural networks for the current combination of nodes per layer i and 2 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i), linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i), linear.output = FALSE)
+    }
+    if(j == 3){
+      # calculate the neural networks for the current combination of nodes per layer i and 3 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i), linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i), linear.output = FALSE)
+    }
+    if(j == 4){
+      # calculate the neural networks for the current combination of nodes per layer i and 4 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i), linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i), linear.output = FALSE)
+    }
+    if(j == 5){
+      # calculate the neural networks for the current combination of nodes per layer i and 5 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i), linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i), linear.output = FALSE)
+    }
+    if(j == 6){
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i), linear.output = FALSE) # calculate the neural network for the current combination of nodes per layer and 6 hidden layers
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i), linear.output = FALSE)
+    }
+    if(j == 7){
+      # calculate the neural networks for the current combination of nodes per layer i and 7 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i,i), linear.output = FALSE) # calculate the neural network for the current combination of nodes per layer and 7 hidden layers
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i,i), linear.output = FALSE)
+    }
+    if(j == 8){
+      # calculate the neural networks for the current combination of nodes per layer i and 8 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i,i,i), linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i,i,i), linear.output = FALSE)
+    }
+    if(j == 9){
+      # calculate the neural networks for the current combination of nodes per layer i and 9 hidden layers for both "small" training samples
+      set.seed(1)
+      currentBalanced <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i,i,i,i), linear.output = FALSE)
+      currentRandom <- newNeuralNetwork(isFraud ~ ., data = trainSmall, hidden = c(i,i,i,i,i,i,i,i,i), linear.output = FALSE)
+    }
+    print("-")
+    results$PredictionBalanced <- as.factor(round(comp(currentBalanced, validation)$net.result[,2])) # predictions for the validation set
+    results$PredictionRandom <- as.factor(round(comp(currentRandom, validation)$net.result[,2])) # predictions for the validation set
+    
+    performance[(j-1)*9+i,3] <- sensitivity(results$PredictionBalanced, results$True.isFraud) # calculate sensitivity
+    performance[(j-1)*9+i,4] <- sensitivity(results$PredictionRandom, results$True.isFraud) # calculate sensitivity
+    performance[(j-1)*9+i,5] <- specificity(results$PredictionBalanced, results$True.isFraud) # calculate specificity
+    performance[(j-1)*9+i,6] <- specificity(results$PredictionRandom, results$True.isFraud) # calculate specificity
+    performance[(j-1)*9+i,7] <- confusionMatrix(results$PredictionBalanced, results$True.isFraud, positive = "1")$overall[1] # get the overall accuracy for the balanced training sample
+    performance[(j-1)*9+i,8] <- confusionMatrix(results$PredictionRandom, results$True.isFraud, positive = "1")$overall[1] # get the overall accuracy for the random training sample
+  }
+}
+```
+
+In the following, the performances will be evaluated. The performance table will be ordered by SensitivityBalanced.
+```{r, message=FALSE, warning=FALSE}
+performance <- na.omit(performance) # leave out NAs that might have appeared, using try
+performance <- performance[order(-SensitivityBalanced),] # reorder it by SensitivityTest
+kable(head(performance, 10)) # show the first rows of the performance table
+```
+
+The best trade-off between complexity and performance seems to be the the network with 1 hidden layer with 4 nodes. This one will be used in the following to be computed with the whole training set and then evaluated with the validation set.
+```{r, message=FALSE, warning=FALSE}
+current <- newNeuralNetwork(isFraud ~ ., data = train, hidden = 4, linear.output = FALSE) # calculate the neural network with 1 hidden layer with 4 nodes, that has previously been evaluated as the "best"
+
+performanceNet <- data.table("Prediction" = as.factor(round(comp(current, test)$net.result[,2])), "True" = test[,9]) # create a data table to store the predictions and the true values
+
+confusionMatrix(performanceNet$Prediction, performanceNet$True.isFraud, positive = "1") # create the confusion matrix
+```
+
+### Presenting the results
+
+2 confusion matrices will be produced.
+```{r, message=FALSE, warning=FALSE}
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+Values      <- c(554256, 0, 1637, 7) # set the number of values accordingly
+Fill <- c(2,0,1,0.5) # create a vector for later colorization
+data <- data.frame(True, Predicted, Values) # combine the created vectors
+
+ggplot(data =  data, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = Fill), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", Values)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix for neural network") # set the plot title
+
+fourfoldplot(table(performanceNet), color = c("red", "lightblue")) # create a second confusion matrix as comparison
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# presenting the variable importances
+importance <- olden(current, bar_plot=FALSE) # getting variable importances
+importance$features <- row.names(importance) # getting rownames as an extra column
+
+ggplot(importance) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, importance), y = importance), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"),
+        axis.line=element_line(color="black"),
+        axis.text = element_text(size = 12),
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance for the neural network", # set white background
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+
+plot(current, # the data shall be the previously calculated network
+     show.weights = FALSE, # do not show weights because it would be to full
+     information = FALSE, # do not give any additional information
+     fill = 'lightblue') # fill the nodes with lightblue
+```
+
+## Graphs from Python
+
+In this abstract, the graphs for the methods that were implemented in Python will be produced. For this, the data from Python will be copied.
+
+### Graphs for knn
+```{r, message=FALSE, warning=FALSE}
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+Values      <- c(554256, 0, 1637, 7) # set the number of values accordingly
+Fill <- c(2,0,1,0.5) # create a vector for later colorization
+data <- data.frame(True, Predicted, Values) # combine the created vectors
+
+ggplot(data =  data, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = Fill), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", Values)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix for KNN") # set the plot title
+```
+
+```{r, message=FALSE, warning=FALSE}
+importance <- olden(current, bar_plot=FALSE) # getting variable importances
+importance$features <- row.names(importance) # getting rownames as an extra column
+
+ggplot(importance) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, importance), y = importance), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"), # set the background to white
+        axis.line = element_line(color = "black"), # set the axis color to black
+        axis.text = element_text(size = 12), # set the axis labels size
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance for KNN", # set the title
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+```
+
+### Graphs for Naive Bayes
+```{r, message=FALSE, warning=FALSE}
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+Values      <- c(553773, 482, 1639, 5) # set the number of values accordingly
+Fill <- c(2,0.5,1,0) # create a vector for later colorization
+data <- data.frame(True, Predicted, Values) # combine the created vectors
+
+ggplot(data =  data, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = Fill), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", Values)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix for Naive Bayes") # set the plot title
+```
+
+```{r, message=FALSE, warning=FALSE}
+importance <- olden(current, bar_plot=FALSE) # getting variable importances
+importance$features <- row.names(importance) # getting rownames as an extra column
+
+ggplot(importance) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, importance), y = importance), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"), # set the background to white
+        axis.line = element_line(color = "black"), # set the axis color to black
+        axis.text = element_text(size = 12), # set the axis labels size
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance for Naive Bayes", # set the title
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+```
+
+### Graphs for Ensembles
+```{r, message=FALSE, warning=FALSE}
+Predicted <- factor(c("nonFraud", "isFraud", "isFraud", "nonFraud")) # set the possible outcomes for the predictions
+True <- factor(c("nonFraud", "nonFraud", "isFraud", "isFraud")) # set the possible outcomes for the true values
+Values      <- c(554256, 0, 1637, 7) # set the number of values accordingly
+Fill <- c(2,0,1,0.5) # create a vector for later colorization
+data <- data.frame(True, Predicted, Values) # combine the created vectors
+
+ggplot(data =  data, mapping = aes(x = True, y = Predicted)) + # create a new ggplot with the variables created above
+  geom_tile(aes(fill = Fill), colour = "black") + # create a geom:tile element with the fill values from above
+  geom_text(aes(label = sprintf("%1.0f", Values)), vjust = 1, size = 7) + # define the shape of the values in the plot
+  scale_fill_gradient(low = "white", high = "lightblue") + # apply the above prepared filling
+  theme_bw() + # set the bw theme
+  theme(legend.position = "none", # no legend
+        axis.text = element_text(size = 14), # define the font size of the axis texts
+        axis.title = element_text(size = 14, face = "bold"), # define the font size of the axis title
+        plot.title = element_text(size = 16, face = "bold")) + # define the font size of the plot title
+  labs(title = "Confusion matrix for Ensembles") # set the plot title
+```
+
+```{r, message=FALSE, warning=FALSE}
+importance <- olden(current, bar_plot = FALSE) # getting variable importances
+importance$features <- row.names(importance) # getting rownames as an extra column
+
+ggplot(importance) + # create a new ggplot with importance as data
+  geom_bar(stat = "identity", aes(x = reorder(features, importance), y = importance), fill = "lightblue", color = "black") + # put features on the x-axis and importance on the y-axis
+  theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1), # flip the x-axis labels
+        panel.background = element_rect(fill = "white"), # set the background to white
+        axis.line = element_line(color = "black"), # set the axis color to black
+        axis.text = element_text(size = 12), # set the axis labels size
+        plot.title = element_text(size = 16, face = "bold")) + # flip x-axis labels
+  labs(title = "Variable importance for Ensembles", # set the title
+       x = "", # set empty x-axis title
+       y = "Importance") # set the title
+```
+
+## Additional Graphs
+
+The following graph will show the distribution of fraud and nonFraud observations for the two most important variables amount_is_equal_to_balance and oldbalanceOrg. Even though the data are normalized, one can obtain the most important insights.
+
+```{r, message=FALSE, warning=FALSE}
+# taking a smaller (5%) random sample of the test set
+plotSample <- sample(seq_len(nrow(test)), size = 0.05*nrow(test)) # taking random indices (5%) of the test set
+plotSample <- test[plotSample,] # assigning the respective data to the indices
+
+ggplot(plotSample) + # create a ggplot with the previously created data
+  geom_point(aes(y=amount_is_equal_to_balance, x=oldbalanceOrg, color = isFraud)) + # make a point plot with amount_is_equal_to_balance on the y-axis and oldbalanceOrg on the x-axis, use isFraud as color indicator
+  scale_color_manual(values=c("green", "red")) + # assign the colors
+  theme_bw() + # set the theme of the plot
+  labs(title = "Fraud/nonFraud observations for the two most important variables") # set the title
+```
+
+
+
+
+
+
+
+
+
+
+
